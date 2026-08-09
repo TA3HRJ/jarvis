@@ -4,13 +4,20 @@ CLAUDE.md bağlayıcı kural #2: mikroservis sprawl yok, tek süreç."""
 import os
 import subprocess
 import tempfile
+import threading
 import wave
 
 import numpy as np
 import torch
 
 from .dispatch import handle_command
+from .logsetup import get_logger
 from .tts import speak
+
+logger = get_logger("jarvis.main")
+
+API_HOST = "100.100.59.67"
+API_PORT = 8765
 
 SOURCE = "jarvis_echo_cancel_source"
 SAMPLE_RATE = 16000
@@ -117,34 +124,48 @@ def _transcribe(audio: np.ndarray) -> str:
         return " ".join(s.text.strip() for s in segments).strip()
 
 
+def _run_api_server() -> None:
+    """Uzaktan dispatch API'sini (Faz 6) aynı süreç içinde, arka plan thread'inde çalıştırır —
+    ayrı bir süreç olarak çalıştırmak router/brain modellerini iki kere yükletiyordu (CUDA OOM'a
+    yol açtı) — CLAUDE.md kural #2: tek süreç orkestratör."""
+    import uvicorn
+
+    from .api import app
+
+    uvicorn.run(app, host=API_HOST, port=API_PORT, log_level="warning")
+
+
 def run() -> None:
     from openwakeword.model import Model as WakeModel
     from silero_vad import load_silero_vad
+
+    threading.Thread(target=_run_api_server, daemon=True).start()
 
     wake_model = WakeModel(wakeword_model_paths=[_find_wake_model_path()])
     vad_model = load_silero_vad()
     proc = _open_audio_stream()
 
-    print("Jarvis dinliyor... (\"hey jarvis\" bekleniyor)")
+    logger.info('Jarvis dinliyor... ("hey jarvis" bekleniyor)')
     try:
         while True:
             frame = _read_frame(proc, WAKE_FRAME_SAMPLES)
             if frame is None:
+                logger.warning("mikrofon akışı kesildi (pw-record EOF), döngü sonlanıyor")
                 break
             prediction = wake_model.predict(frame)
             score = prediction.get(WAKE_MODEL_NAME, 0.0)
             if os.environ.get("JARVIS_DEBUG_WAKE") and score > 0.02:
-                print(f"[debug] wake skoru: {score:.3f}")
+                logger.debug("wake skoru: %.3f", score)
             if score > WAKE_THRESHOLD:
-                print("Wake word algılandı, dinleniyor...")
+                logger.info("wake word algılandı (skor=%.3f), dinleniyor...", score)
                 utterance = _capture_utterance(proc, vad_model)
                 if len(utterance) < SAMPLE_RATE * MIN_UTTERANCE_SECONDS:
+                    logger.info("çok kısa/boş konuşma, atlanıyor")
                     continue
                 text = _transcribe(utterance)
-                print(f"Duyulan: {text!r}")
+                logger.info("duyulan: %r", text)
                 if text:
-                    response = handle_command(text)
-                    print(f"Yanıt: {response}")
+                    response = handle_command(text, source="local")
                     speak(response, barge_in=False)
     finally:
         proc.terminate()

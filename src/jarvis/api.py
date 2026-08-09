@@ -31,7 +31,7 @@ def _handle(text: str) -> dict:
     if not text:
         raise HTTPException(400, "text gerekli")
 
-    response = handle_command(text)
+    response = handle_command(text, source="remote")
     notify(response)
     return {"response": response}
 
