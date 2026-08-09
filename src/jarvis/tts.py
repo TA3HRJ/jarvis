@@ -23,6 +23,10 @@ SOURCE = "jarvis_echo_cancel_source"
 VAD_SAMPLE_RATE = 16000
 VAD_FRAME_SAMPLES = 512
 BARGE_IN_THRESHOLD = 0.6
+# AEC (yankı bastırma) playback başlar başlamaz henüz yakınsamamış olabiliyor — o kısa
+# pencerede Jarvis'in kendi sesi mikrofona sızıp barge-in'i yanlışlıkla tetikliyordu
+# (canlı testte: hiç konuşamadan hep kesiliyordu). İlk bu kadar saniyeyi göz ardı et.
+BARGE_IN_GRACE_SECONDS = 0.6
 
 _voice: PiperVoice | None = None
 _vad_model = None
@@ -52,13 +56,18 @@ def _watch_for_speech(interrupted: threading.Event, playback: subprocess.Popen) 
         ],
         stdout=subprocess.PIPE,
     )
+    grace_frames = int(BARGE_IN_GRACE_SECONDS * VAD_SAMPLE_RATE / VAD_FRAME_SAMPLES)
+    frame_count = 0
     try:
         while playback.poll() is None:
             data = rec.stdout.read(frame_bytes)
             if len(data) < frame_bytes:
                 break
+            frame_count += 1
             audio = torch.from_numpy(np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0)
             prob = model(audio, VAD_SAMPLE_RATE).item()
+            if frame_count <= grace_frames:
+                continue
             if prob > BARGE_IN_THRESHOLD:
                 interrupted.set()
                 playback.terminate()
