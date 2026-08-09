@@ -91,6 +91,15 @@ def _ask_claude(user_message: str, model: str = CLAUDE_MODEL, effort: str = "med
         """
         return TOOL_IMPLS["recall"](query)
 
+    @beta_tool
+    def get_weather(city: str) -> str:
+        """Bir şehrin güncel hava durumunu (sıcaklık, hava kodu) getirir.
+
+        Args:
+            city: Hava durumu sorulan şehrin adı, örn. İzmir.
+        """
+        return TOOL_IMPLS["get_weather"](city)
+
     client = anthropic.Anthropic()
     runner = client.beta.messages.tool_runner(
         model=model,
@@ -98,7 +107,7 @@ def _ask_claude(user_message: str, model: str = CLAUDE_MODEL, effort: str = "med
         system=SYSTEM_PROMPT,
         thinking={"type": "adaptive"},
         output_config={"effort": effort},
-        tools=[run_sandboxed_command, remember, recall],
+        tools=[run_sandboxed_command, remember, recall, get_weather],
         messages=[{"role": "user", "content": user_message}],
     )
     last_text = ""

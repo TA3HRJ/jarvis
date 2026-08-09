@@ -5,6 +5,8 @@ henüz uygulanmadığını söyler."""
 import datetime
 import subprocess
 
+from .tools import get_weather_impl
+
 
 def _saat_kac(slots: dict) -> str:
     now = datetime.datetime.now()
@@ -34,6 +36,10 @@ def _ses_ayarla(slots: dict) -> str:
     return f"Sesi yüzde {seviye}'e ayarladım."
 
 
+def _hava_durumu(slots: dict) -> str:
+    return get_weather_impl(slots.get("sehir", ""))
+
+
 def _henuz_yok(slots: dict) -> str:
     return "Bu özelliği henüz uygulamadım."
 
@@ -44,7 +50,7 @@ HANDLERS = {
     "sesi_kis": _sesi_kis,
     "sesi_ac": _sesi_ac,
     "ses_ayarla": _ses_ayarla,
-    "hava_durumu": _henuz_yok,
+    "hava_durumu": _hava_durumu,
     "alarm_kur": _henuz_yok,
 }
 

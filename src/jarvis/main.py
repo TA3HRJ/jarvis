@@ -2,6 +2,7 @@
 CLAUDE.md bağlayıcı kural #2: mikroservis sprawl yok, tek süreç."""
 
 import os
+import re
 import subprocess
 import tempfile
 import threading
@@ -23,13 +24,25 @@ SOURCE = "jarvis_echo_cancel_source"
 SAMPLE_RATE = 16000
 WAKE_FRAME_SAMPLES = 1280  # openWakeWord: 80ms katları
 VAD_FRAME_SAMPLES = 512  # Silero VAD
-WAKE_THRESHOLD = 0.5
+WAKE_THRESHOLD = 0.6  # arka plan gürültüsünde yanlış tetiklenmeyi azaltmak için 0.5'ten yükseltildi
 VAD_THRESHOLD = 0.5
 MAX_UTTERANCE_SECONDS = 15
 SILENCE_END_SECONDS = 1.2
 MIN_UTTERANCE_SECONDS = 0.3
-POST_WAKE_DISCARD_SECONDS = 0.4  # "Hey Jarvis"in kuyruğu komuta karışmasın diye kısa bir atlama
+POST_WAKE_DISCARD_SECONDS = 0.7  # "Hey Jarvis"in kuyruğu komuta karışmasın diye kısa bir atlama
 WAKE_MODEL_NAME = "hey_jarvis_v0.1"
+
+# 0.4sn atlama bazen yetmiyor, Whisper "Hey Jarvis"i de transkribe edip komuta ekliyor
+# (örn. "H.A.R.V.I.S Sesi Kıs", "Hey Jarvis, bilgisayarın sesini kıs") — metinden de temizle.
+_WAKE_PREFIX_RE = re.compile(
+    r"^\s*(hey[,.]?\s*)?(jarvis|charles|travis|yarvis|harvis|h\.?a\.?r\.?v\.?i\.?s\.?)[,.]?\s*",
+    re.IGNORECASE,
+)
+
+
+def _strip_wake_prefix(text: str) -> str:
+    stripped = _WAKE_PREFIX_RE.sub("", text, count=1).strip()
+    return stripped if stripped else text
 
 _whisper_model = None
 
@@ -112,6 +125,9 @@ def _get_whisper_model():
     return _whisper_model
 
 
+NO_SPEECH_THRESHOLD = 0.6  # bu üstündeki segmentler gürültü/sessizlik sayılır, atılır
+
+
 def _transcribe(audio: np.ndarray) -> str:
     model = _get_whisper_model()
     with tempfile.NamedTemporaryFile(suffix=".wav") as f:
@@ -121,7 +137,8 @@ def _transcribe(audio: np.ndarray) -> str:
             w.setframerate(SAMPLE_RATE)
             w.writeframes(audio.tobytes())
         segments, _ = model.transcribe(f.name, language="tr")
-        return " ".join(s.text.strip() for s in segments).strip()
+        kept = [s for s in segments if s.no_speech_prob < NO_SPEECH_THRESHOLD]
+        return " ".join(s.text.strip() for s in kept).strip()
 
 
 def _run_api_server() -> None:
@@ -162,7 +179,7 @@ def run() -> None:
                 if len(utterance) < SAMPLE_RATE * MIN_UTTERANCE_SECONDS:
                     logger.info("çok kısa/boş konuşma, atlanıyor")
                     continue
-                text = _transcribe(utterance)
+                text = _strip_wake_prefix(_transcribe(utterance))
                 logger.info("duyulan: %r", text)
                 if text:
                     response = handle_command(text, source="local")
