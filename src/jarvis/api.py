@@ -15,18 +15,20 @@ app = FastAPI()
 TOKEN_ENV = "JARVIS_API_TOKEN"
 
 
-def _check_token(authorization: str | None) -> None:
+def _check_token(authorization: str | None, token_param: str | None) -> None:
+    """Authorization header VEYA ?token= sorgu parametresi kabul edilir — iOS Shortcuts'ta
+    header ayarlamak zahmetli olduğu için query param olarak da izin veriliyor. Güvenlik
+    sınırı zaten Tailscale mesh'i (bu uç genel internete açık değil)."""
     expected = os.environ.get(TOKEN_ENV)
     if not expected:
         raise HTTPException(500, "JARVIS_API_TOKEN ayarlanmamış")
-    if authorization != f"Bearer {expected}":
+    got = token_param or (authorization[7:] if authorization and authorization.startswith("Bearer ") else None)
+    if got != expected:
         raise HTTPException(401, "geçersiz token")
 
 
-@app.post("/command")
-def command(body: dict, authorization: str | None = Header(default=None)) -> dict:
-    _check_token(authorization)
-    text = (body.get("text") or "").strip()
+def _handle(text: str) -> dict:
+    text = (text or "").strip()
     if not text:
         raise HTTPException(400, "text gerekli")
 
@@ -38,6 +40,28 @@ def command(body: dict, authorization: str | None = Header(default=None)) -> dic
 
     notify(response)
     return {"response": response}
+
+
+@app.get("/command")
+def command_get(
+    text: str = "",
+    token: str | None = None,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    """iOS Shortcuts için en basit yol: tek bir GET isteği, başlık/gövde ayarı gerekmez.
+    Örnek: /command?text=saat+kaç&token=..."""
+    _check_token(authorization, token)
+    return _handle(text)
+
+
+@app.post("/command")
+def command_post(
+    body: dict,
+    token: str | None = None,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _check_token(authorization, token)
+    return _handle(body.get("text", ""))
 
 
 @app.get("/health")
