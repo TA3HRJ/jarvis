@@ -10,7 +10,7 @@ import os
 
 from .tools import SYSTEM_PROMPT, TOOL_DESCRIPTIONS, TOOL_IMPLS, TOOL_PARAM_NAMES
 
-DEEPSEEK_MODEL = "deepseek-v4-pro"
+DEEPSEEK_MODEL = "deepseek-v4-flash"  # canlı testte "pro" yanıt süresi ~6-12sn ölçüldü, sesli asistan için çok yavaş
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 CLAUDE_MODEL = "claude-opus-5"
 
@@ -41,7 +41,12 @@ def _ask_deepseek(user_message: str, model: str = DEEPSEEK_MODEL) -> str:
     ]
 
     for _ in range(10):
-        response = client.chat.completions.create(model=model, messages=messages, tools=tools)
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            tools=tools,
+            extra_body={"thinking": {"type": "disabled"}},
+        )
         msg = response.choices[0].message
         if not msg.tool_calls:
             return msg.content or ""

@@ -7,6 +7,7 @@ import numpy as np
 from .catalog import CATALOG, Intent
 
 LAYER2_THRESHOLD = 0.72
+LAYER3_MIN_SIMILARITY = 0.35  # bunun altındaysa soru kataloğa hiç yakın değil, Katman 3'ü boşuna denemeye değmez
 
 
 @dataclass
@@ -51,16 +52,19 @@ def _get_catalog_embeddings():
     return _catalog_embeddings
 
 
-def layer2_match(text: str) -> RouteResult | None:
+def _layer2_best(text: str) -> tuple[Intent, float]:
     model = _get_embed_model()
     catalog_emb = _get_catalog_embeddings()
     query_emb = model.encode([text], normalize_embeddings=True)[0]
     sims = catalog_emb @ query_emb
     best_i = int(np.argmax(sims))
-    best_score = float(sims[best_i])
+    return _catalog_index[best_i][0], float(sims[best_i])
+
+
+def layer2_match(text: str) -> RouteResult | None:
+    intent, best_score = _layer2_best(text)
     if best_score < LAYER2_THRESHOLD:
         return None
-    intent, _ = _catalog_index[best_i]
     slots = intent.match_regex(text) or {}
     if intent.slots and not slots:
         return None  # niyet bulundu ama slot dolduramadık, katman 3'e bırak
@@ -68,11 +72,19 @@ def layer2_match(text: str) -> RouteResult | None:
 
 
 def route(text: str, use_layer3: bool = True) -> RouteResult:
-    for fn in (layer1_match, layer2_match):
-        result = fn(text)
-        if result is not None:
-            return result
-    if use_layer3:
+    result = layer1_match(text)
+    if result is not None:
+        return result
+
+    intent, best_score = _layer2_best(text)
+    if best_score >= LAYER2_THRESHOLD:
+        slots = intent.match_regex(text) or {}
+        if not (intent.slots and not slots):
+            return RouteResult(intent=intent.name, slots=slots, layer=2, confidence=best_score)
+
+    # Skor kataloğa hiç yakın değilse Katman 3'ü (yerel LLM, GPU'ya yükleme maliyeti var)
+    # boşuna denemeye değmez — canlı testte açık uçlu sorularda gereksiz ~2-3sn ekliyordu.
+    if use_layer3 and best_score >= LAYER3_MIN_SIMILARITY:
         from .layer3 import layer3_match
 
         result = layer3_match(text)

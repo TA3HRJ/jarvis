@@ -2,8 +2,11 @@
 çıktısı JSON şemasıyla kısıtlanır, serbest metin üretemez."""
 
 import json
+import threading
 
 from .catalog import CATALOG
+
+IDLE_UNLOAD_SECONDS = 60
 
 MODEL_PATH = "models/llm/qwen2.5-3b-instruct-q4_k_m.gguf"
 
@@ -31,6 +34,7 @@ SYSTEM_PROMPT = (
 
 _llm = None
 _grammar = None
+_unload_timer = None
 
 
 def _get_llm():
@@ -54,7 +58,9 @@ def _get_grammar():
 def _unload_llm() -> None:
     """Idle unload (CLAUDE.md bağlayıcı kural #5): Whisper zaten GPU'da yüklüyse Katman 3'ün
     3B modeliyle aynı anda kalmak 6GB VRAM'i aşabiliyor (canlı testte OOM'a yol açtı) —
-    kullanımdan hemen sonra GPU'dan boşalt."""
+    ama HER kullanımdan hemen sonra boşaltmak "her seferinde yeniden yükle"ye dönüşüp
+    route()'u 11+ saniyeye çıkardı (canlı testte ölçüldü). Doğrusu: gerçekten BOŞTA
+    kalınca (IDLE_UNLOAD_SECONDS) boşalt, ardışık hızlı kullanımlarda sıcak tut."""
     global _llm
     if _llm is not None:
         del _llm
@@ -62,6 +68,15 @@ def _unload_llm() -> None:
         import gc
 
         gc.collect()
+
+
+def _schedule_idle_unload() -> None:
+    global _unload_timer
+    if _unload_timer is not None:
+        _unload_timer.cancel()
+    _unload_timer = threading.Timer(IDLE_UNLOAD_SECONDS, _unload_llm)
+    _unload_timer.daemon = True
+    _unload_timer.start()
 
 
 def layer3_match(text: str):
@@ -79,7 +94,7 @@ def layer3_match(text: str):
             temperature=0,
         )
     finally:
-        _unload_llm()
+        _schedule_idle_unload()
 
     content = out["choices"][0]["message"]["content"]
     try:
