@@ -88,8 +88,8 @@ internet kesildiğinde Katman 1-3 çalışmaya devam eder.
   - [x] BTRFS snapshot yapılandırması doğrula — snapper `root` + timeline/cleanup timer aktif
 - [x] **Faz 1 — Temel ortam**: uv + pinlenmiş Python 3.12, CUDA 13.3 + cuDNN 9.25, git, proje iskeleti
 - [x] **Faz 2 — Kulak**: PipeWire echo-cancel modülü (`jarvis_echo_cancel_source/sink`), Silero VAD, openWakeWord (bundled `hey_jarvis_v0.1` modeli hazır), faster-whisper `medium` GPU'da doğrulandı — `ctranslate2` CUDA 12 ABI istiyor, sistem CUDA 13 ile çakışıyor: `nvidia-cublas-cu12`/`nvidia-cudnn-cu12` proje bağımlılığı olarak eklendi, çalıştırırken `LD_LIBRARY_PATH` bu paketlerin `lib/` dizinlerini göstermeli
-- [ ] **Faz 3 — Ağız** ← ŞU AN BURADAYIZ: Piper streaming TTS, barge-in (Jarvis konuşurken sözünü kesebilme)
-- [ ] **Faz 4 — Yönlendirici**: Katman 1-2-3, komut kataloğu, slot doldurma
+- [x] **Faz 3 — Ağız**: Piper `tr_TR-dfki-medium` sesi, `src/jarvis/tts.py` — sentence-chunk streaming (`PiperVoice.synthesize()` iterator → `pw-cat --raw` stdin), barge-in (paralel thread'de `pw-record` + Silero VAD, konuşma algılanınca playback subprocess'i `terminate()`) — ikisi de canlı testte doğrulandı
+- [ ] **Faz 4 — Yönlendirici** ← ŞU AN BURADAYIZ: Katman 1-2-3, komut kataloğu, slot doldurma
 - [ ] **Faz 5 — Beyin**: bulut LLM tool-calling döngüsü, kod çalıştırma sandbox'ı, MCP, SQLite hafıza. **Masaüstü otomasyon ihtiyacı burada netleşir → X11/Wayland kararı burada verilir.**
 - [ ] **Faz 6 — Uzaktan dispatch**: Tailscale (port forward YOK), FastAPI + token auth, iOS Shortcuts + Siri, ntfy push
 - [ ] **Faz 7 — Servisleştirme + sertleştirme**: systemd servis, crash recovery, log/observability, yetki allowlist, denetim logu
