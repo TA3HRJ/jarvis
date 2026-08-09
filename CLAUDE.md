@@ -129,3 +129,4 @@ internet kesildiğinde Katman 1-3 çalışmaya devam eder.
 - ~~Türkçe Whisper `small` doğruluğu yeterli mi, `medium` gerekli mi?~~ → `medium` gerekli, karar verildi (Faz 2)
 - Piper Türkçe ses kalitesi günlük kullanımda kabul edilebilir mi? (Faz 3)
 - Jarvis ne kadar GUI otomasyonu yapacak → X11 mi Wayland mi? (Faz 5)
+- **Bilinen sınırlama:** `language="tr"` zorlaması yüzünden cümle içine gömülü İngilizce özel isimler (dizi/film adı vb.) sık yanlış transkribe ediliyor (Faz 7'de canlı testte fark edildi). Kod düzeltmesiyle tam çözülmüyor — muhtemel çözümler (otomatik dil algılama, daha büyük model) ayrı bir değerlendirme gerektiriyor, henüz yapılmadı.
