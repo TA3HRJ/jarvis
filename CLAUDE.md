@@ -59,12 +59,13 @@ internet kesildiğinde Katman 1-3 çalışmaya devam eder.
 
 | | Yer | Boyut |
 |---|---|---|
-| Whisper small int8 | VRAM | ~1 GB |
-| Katman 3 yerel model (3B Q4) | VRAM | ~2 GB |
-| **VRAM toplam** | | **~3 / 6 GB** |
+| Whisper medium int8 | VRAM | ~1.5-2 GB (small yerine medium'a geçildi, Faz 2) |
+| Katman 3 yerel model (3B Q4, dosya 2.1 GB) | VRAM | ~2-2.5 GB |
+| **VRAM toplam (aynı anda yüklüyse)** | | **~4 / 6 GB** — lazy load + idle unload kuralı önemli, ikisi sürekli birlikte yüklü kalmamalı |
+| Katman 2 embedding modeli (`paraphrase-multilingual-MiniLM-L12-v2`) | RAM (CPU) | ~458 MB (plandaki ~100MB tahmininden büyük çıktı, Faz 4) |
 | Piper TTS | RAM | ~200 MB |
 | Orkestratör + ses hattı | RAM | ~800 MB |
-| **Jarvis RAM ayak izi** | | **~1 GB** |
+| **Jarvis RAM ayak izi** | | **~1.5 GB** |
 
 ### 16 GB için bağlayıcı kurallar
 
@@ -89,8 +90,8 @@ internet kesildiğinde Katman 1-3 çalışmaya devam eder.
 - [x] **Faz 1 — Temel ortam**: uv + pinlenmiş Python 3.12, CUDA 13.3 + cuDNN 9.25, git, proje iskeleti
 - [x] **Faz 2 — Kulak**: PipeWire echo-cancel modülü (`jarvis_echo_cancel_source/sink`), Silero VAD, openWakeWord (bundled `hey_jarvis_v0.1` modeli hazır), faster-whisper `medium` GPU'da doğrulandı — `ctranslate2` CUDA 12 ABI istiyor, sistem CUDA 13 ile çakışıyor: `nvidia-cublas-cu12`/`nvidia-cudnn-cu12` proje bağımlılığı olarak eklendi, çalıştırırken `LD_LIBRARY_PATH` bu paketlerin `lib/` dizinlerini göstermeli
 - [x] **Faz 3 — Ağız**: Piper `tr_TR-dfki-medium` sesi, `src/jarvis/tts.py` — sentence-chunk streaming (`PiperVoice.synthesize()` iterator → `pw-cat --raw` stdin), barge-in (paralel thread'de `pw-record` + Silero VAD, konuşma algılanınca playback subprocess'i `terminate()`) — ikisi de canlı testte doğrulandı
-- [ ] **Faz 4 — Yönlendirici** ← ŞU AN BURADAYIZ: Katman 1-2-3, komut kataloğu, slot doldurma
-- [ ] **Faz 5 — Beyin**: bulut LLM tool-calling döngüsü, kod çalıştırma sandbox'ı, MCP, SQLite hafıza. **Masaüstü otomasyon ihtiyacı burada netleşir → X11/Wayland kararı burada verilir.**
+- [x] **Faz 4 — Yönlendirici**: `src/jarvis/catalog.py` (komut kataloğu: 7 örnek niyet, regex + örnek ifadeler + slotlar), `src/jarvis/router.py` (Katman 1 regex → Katman 2 embedding → Katman 3 yerel LLM zinciri), `src/jarvis/layer3.py` (Qwen2.5-3B-Instruct Q4_K_M, GPU tam offload, JSON-schema ile kısıtlanmış çıktı — "beyin değil" sınırı kod seviyesinde uygulanıyor). Üçü de canlı test edildi ve çalışıyor: Katman 1 tam eşleşmede (`saat kaç` → conf 1.0), Katman 2 parafrazda güçlü (`şu an saati söyler misin` → conf 0.96, `...kilitler misin acaba` → conf 0.85, eşik 0.72). **Dürüst not:** Katman 3'ün Türkçe konuşma dili/saat ifadelerinde güvenilirliği düşük — net cümlelerde (`alarm kur saat 07:30`) doğru çalışıyor, ama "yedi otuzda" gibi günlük ifadeleri yanlış saatle (17:30) eşleştirdi ve bazı net niyetleri (`Ankara'da hava durumu ne alemde`) "belirsiz" işaretledi. Bu, projenin kendi tasarımıyla tutarlı (3B küçük model, "SADECE niyet sınıflandırma... Beyin DEĞİL") — zor/belirsiz durumlar Faz 5'teki bulut LLM'e (Katman 4) düşecek. Embedding modeli plandaki "~100MB" tahmininden büyük çıktı: `paraphrase-multilingual-MiniLM-L12-v2` gerçekte ~458MB (CPU'da çalışıyor, VRAM bütçesini etkilemiyor).
+- [ ] **Faz 5 — Beyin** ← ŞU AN BURADAYIZ: bulut LLM tool-calling döngüsü, kod çalıştırma sandbox'ı, MCP, SQLite hafıza. **Masaüstü otomasyon ihtiyacı burada netleşir → X11/Wayland kararı burada verilir.**
 - [ ] **Faz 6 — Uzaktan dispatch**: Tailscale (port forward YOK), FastAPI + token auth, iOS Shortcuts + Siri, ntfy push
 - [ ] **Faz 7 — Servisleştirme + sertleştirme**: systemd servis, crash recovery, log/observability, yetki allowlist, denetim logu
 
