@@ -197,7 +197,7 @@ def run() -> None:
                 logger.info("duyulan: %r", text)
                 if text:
                     response = handle_command(text, source="local")
-                    speak(response, barge_in=False)
+                    speak(response, barge_in=True)
     finally:
         proc.terminate()
 

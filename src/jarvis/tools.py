@@ -1,5 +1,7 @@
 """Katman 4 (bulut LLM) araçlarının sağlayıcıdan bağımsız uygulamaları."""
 
+import subprocess
+
 import httpx
 
 from . import memory
@@ -66,11 +68,29 @@ def get_weather_impl(city: str) -> str:
         return "Hava durumu verisini işleyemedim."
 
 
+def control_volume_impl(action: str) -> str:
+    action = (action or "").strip().lower()
+    if action in ("mute", "sustur", "kapat", "sessiz", "sessize_al"):
+        subprocess.run(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "1"], check=False)
+        return "Sesi susturdum."
+    if action in ("unmute", "ac", "aç", "sessizi_kaldir", "sesi_ac"):
+        subprocess.run(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "0"], check=False)
+        return "Sesi tekrar açtım."
+    if action in ("up", "artir", "arttır", "yukselt", "yükselt"):
+        subprocess.run(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "10%+"], check=False)
+        return "Sesi artırdım."
+    if action in ("down", "azalt", "kis", "kıs", "dusur", "düşür"):
+        subprocess.run(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "10%-"], check=False)
+        return "Sesi kıstım."
+    return f"Bu ses komutunu anlayamadım: {action!r}"
+
+
 TOOL_DESCRIPTIONS = {
     "run_sandboxed_command": "İzole bir sandbox'ta (ağ erişimi yok, salt-okunur kök dosya sistemi) bir shell komutu çalıştırır.",
     "remember": "Kullanıcı hakkında veya bağlam hakkında kalıcı olarak hatırlanması gereken bir bilgiyi kaydeder.",
     "recall": "Geçmişte kaydedilmiş, sorguyla semantik olarak ilgili bilgileri getirir.",
     "get_weather": "Bir şehrin güncel hava durumunu (sıcaklık, hava kodu) getirir.",
+    "control_volume": "Bilgisayarın sistem ses seviyesini gerçekten değiştirir (kısma, açma, susturma, sesi geri açma).",
 }
 
 TOOL_PARAM_NAMES = {
@@ -78,6 +98,7 @@ TOOL_PARAM_NAMES = {
     "remember": ("text", "Hatırlanacak bilgi, tam cümle halinde."),
     "recall": ("query", "Ne hakkında bilgi aranıyor."),
     "get_weather": ("city", "Hava durumu sorulan şehrin adı, örn. İzmir."),
+    "control_volume": ("action", 'Şunlardan biri: "mute" (sustur), "unmute" (sesi geri aç), "up" (sesi artır), "down" (sesi kıs).'),
 }
 
 TOOL_IMPLS = {
@@ -85,6 +106,7 @@ TOOL_IMPLS = {
     "remember": remember_impl,
     "recall": recall_impl,
     "get_weather": get_weather_impl,
+    "control_volume": control_volume_impl,
 }
 
 SYSTEM_PROMPT = (
@@ -94,5 +116,7 @@ SYSTEM_PROMPT = (
     "Kod çalıştırman gerekirse run_sandboxed_command aracını kullan — izole, "
     "ağsız bir sandbox'ta çalışır. Kalıcı olarak hatırlanması gereken bir şey "
     "öğrendiğinde remember aracıyla kaydet, geçmiş bağlam gerektiğinde recall ile ara. "
-    "Hava durumu sorulursa get_weather aracını kullan, şehir belirtilmezse İzmir varsay."
+    "Hava durumu sorulursa get_weather aracını kullan, şehir belirtilmezse İzmir varsay. "
+    "Ses seviyesiyle ilgili herhangi bir istek (kıs, aç, sustur, sessize al, sesi geri aç) "
+    "gelirse control_volume aracını gerçekten kullan — 'yetkim yok' deme, gerçekten yapabiliyorsun."
 )
