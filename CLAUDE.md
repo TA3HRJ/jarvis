@@ -30,7 +30,7 @@ MSI Stealth 15M laptop üzerinde Jarvis tarzı sesli asistan:
 | Oturum tipi | **X11 + Wayland ikisi de kurulu, karar Faz 5'e ertelendi** | Wayland kısıtları `ydotool`/KWin D-Bus ile aşılabilir; KDE X11'i bakım moduna aldı, Plasma 7'de düşecek — kalıcı olarak X11'e kilitlenmek teknik borç |
 | Beyin katmanı | **Katmanlı yönlendirici, LLM son çare** | maliyet + gecikme + çevrimdışı dayanıklılık |
 | TTS | **Piper (yerel, offline, ücretsiz)** | çevrimdışı ve bedava; streaming arayüz arkasına soyutlanacak ki motor sonradan değişebilsin |
-| STT | faster-whisper `small` int8, GPU'da | VRAM bütçesi; Türkçe doğruluk Faz 3'te ölçülecek, yetmezse `medium` yeniden hesaplanır |
+| STT | faster-whisper `medium` int8, GPU'da | Faz 2'de ölçüldü: `small` rahat/kısık konuşmada kelime kaçırıyor (örn. "hava"), `medium` aynı sesi doğru çözüyor. ~1.5-2GB VRAM, Katman 3 (~2GB) ile toplam 6GB bütçenin altında |
 | RAM yükseltmesi | **Yapılmayacak** | fiyat. Not: kullanıcı DDR5 fiyatına bakmıştı, bu makine DDR4 — istenirse yeniden değerlendirilebilir |
 
 ## Mimari — katmanlı niyet yönlendirici
@@ -77,18 +77,18 @@ internet kesildiğinde Katman 1-3 çalışmaya devam eder.
 
 ## Fazlar
 
-- [ ] **Faz 0 — Donanım doğrulama** ← ŞU AN BURADAYIZ
-  - [ ] Envanter raporu (kernel, CPU, RAM, GPU, oturum tipi)
-  - [ ] `arecord -l` / `wpctl status` — mikrofon dizisi görünüyor mu
-  - [ ] SOF firmware kernel mesajları temiz mi
-  - [ ] **Mikrofon kayıt kalite testi** ← projenin gerçek risk kapısı
-  - [ ] AEC testi (hoparlör çalarken eşzamanlı kayıt)
-  - [ ] `nvidia-smi`, `sensors`, `msi-ec` fan kontrolü
-  - [ ] BIOS: VT-x/VT-d, güç/uyku politikası (AC'de uyuma yok, kapak kapalı çalışsın)
-  - [ ] BTRFS snapshot yapılandırması doğrula
-- [ ] **Faz 1 — Temel ortam**: uv + pinlenmiş Python, CUDA + cuDNN, git, proje iskeleti
-- [ ] **Faz 2 — Kulak**: PipeWire ses grafiği, AEC, Silero VAD, openWakeWord, faster-whisper + Türkçe doğruluk ölçümü
-- [ ] **Faz 3 — Ağız**: Piper streaming TTS, barge-in (Jarvis konuşurken sözünü kesebilme)
+- [x] **Faz 0 — Donanım doğrulama**
+  - [x] Envanter raporu (kernel, CPU, RAM, GPU, oturum tipi)
+  - [x] `arecord -l` / `wpctl status` — mikrofon dizisi görünüyor mu
+  - [x] SOF firmware kernel mesajları temiz mi
+  - [x] **Mikrofon kayıt kalite testi** — `Dmic0` %100 kazanç kırpıyordu, %50'ye (35) düşürüldü + `alsactl store` ile kalıcı yapıldı (reboot sonrası bir kez sıfırlanmıştı, tekrar uygulandı)
+  - [x] AEC testi (hoparlör çalarken eşzamanlı kayıt) — akustik sızıntı var, beklenen (module-echo-cancel Faz 2'de kuruldu)
+  - [x] `nvidia-smi`, `sensors`, `msi-ec` fan kontrolü — `msi-ec` EC firmware'i desteklemiyor, `msi_wmi_platform` salt-okunur çalışıyor (Faz 7'ye ertelendi)
+  - [x] BIOS: VT-x/VT-d, güç/uyku politikası (AC'de uyuma yok, kapak kapalı çalışsın) — VT-x aktif, VT-d proje için gerekmiyor, lid policy `10-jarvis-lid.conf` aktif
+  - [x] BTRFS snapshot yapılandırması doğrula — snapper `root` + timeline/cleanup timer aktif
+- [x] **Faz 1 — Temel ortam**: uv + pinlenmiş Python 3.12, CUDA 13.3 + cuDNN 9.25, git, proje iskeleti
+- [x] **Faz 2 — Kulak**: PipeWire echo-cancel modülü (`jarvis_echo_cancel_source/sink`), Silero VAD, openWakeWord (bundled `hey_jarvis_v0.1` modeli hazır), faster-whisper `medium` GPU'da doğrulandı — `ctranslate2` CUDA 12 ABI istiyor, sistem CUDA 13 ile çakışıyor: `nvidia-cublas-cu12`/`nvidia-cudnn-cu12` proje bağımlılığı olarak eklendi, çalıştırırken `LD_LIBRARY_PATH` bu paketlerin `lib/` dizinlerini göstermeli
+- [ ] **Faz 3 — Ağız** ← ŞU AN BURADAYIZ: Piper streaming TTS, barge-in (Jarvis konuşurken sözünü kesebilme)
 - [ ] **Faz 4 — Yönlendirici**: Katman 1-2-3, komut kataloğu, slot doldurma
 - [ ] **Faz 5 — Beyin**: bulut LLM tool-calling döngüsü, kod çalıştırma sandbox'ı, MCP, SQLite hafıza. **Masaüstü otomasyon ihtiyacı burada netleşir → X11/Wayland kararı burada verilir.**
 - [ ] **Faz 6 — Uzaktan dispatch**: Tailscale (port forward YOK), FastAPI + token auth, iOS Shortcuts + Siri, ntfy push
@@ -104,6 +104,6 @@ internet kesildiğinde Katman 1-3 çalışmaya devam eder.
 ## Açık sorular
 
 - Mikrofon dizisi Linux'ta far-field wake word için yeterli kalitede mi? (Faz 0)
-- Türkçe Whisper `small` doğruluğu yeterli mi, `medium` gerekli mi? (Faz 2)
+- ~~Türkçe Whisper `small` doğruluğu yeterli mi, `medium` gerekli mi?~~ → `medium` gerekli, karar verildi (Faz 2)
 - Piper Türkçe ses kalitesi günlük kullanımda kabul edilebilir mi? (Faz 3)
 - Jarvis ne kadar GUI otomasyonu yapacak → X11 mi Wayland mi? (Faz 5)
