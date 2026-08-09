@@ -21,6 +21,7 @@ VAD_THRESHOLD = 0.5
 MAX_UTTERANCE_SECONDS = 15
 SILENCE_END_SECONDS = 1.2
 MIN_UTTERANCE_SECONDS = 0.3
+POST_WAKE_DISCARD_SECONDS = 0.4  # "Hey Jarvis"in kuyruğu komuta karışmasın diye kısa bir atlama
 WAKE_MODEL_NAME = "hey_jarvis_v0.1"
 
 _whisper_model = None
@@ -72,6 +73,11 @@ def _capture_utterance(proc: subprocess.Popen, vad_model) -> np.ndarray:
     silence_limit = int(SILENCE_END_SECONDS * SAMPLE_RATE / VAD_FRAME_SAMPLES)
     max_frames = int(MAX_UTTERANCE_SECONDS * SAMPLE_RATE / VAD_FRAME_SAMPLES)
     speech_started = False
+    discard_frames = int(POST_WAKE_DISCARD_SECONDS * SAMPLE_RATE / VAD_FRAME_SAMPLES)
+    for _ in range(discard_frames):
+        if _read_frame(proc, VAD_FRAME_SAMPLES) is None:
+            break
+
     for _ in range(max_frames):
         frame = _read_frame(proc, VAD_FRAME_SAMPLES)
         if frame is None:

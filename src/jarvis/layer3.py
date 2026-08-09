@@ -51,19 +51,36 @@ def _get_grammar():
     return _grammar
 
 
+def _unload_llm() -> None:
+    """Idle unload (CLAUDE.md bağlayıcı kural #5): Whisper zaten GPU'da yüklüyse Katman 3'ün
+    3B modeliyle aynı anda kalmak 6GB VRAM'i aşabiliyor (canlı testte OOM'a yol açtı) —
+    kullanımdan hemen sonra GPU'dan boşalt."""
+    global _llm
+    if _llm is not None:
+        del _llm
+        _llm = None
+        import gc
+
+        gc.collect()
+
+
 def layer3_match(text: str):
     from .router import RouteResult
 
     llm = _get_llm()
     grammar = _get_grammar()
-    out = llm.create_chat_completion(
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": text},
-        ],
-        grammar=grammar,
-        temperature=0,
-    )
+    try:
+        out = llm.create_chat_completion(
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": text},
+            ],
+            grammar=grammar,
+            temperature=0,
+        )
+    finally:
+        _unload_llm()
+
     content = out["choices"][0]["message"]["content"]
     try:
         parsed = json.loads(content)

@@ -1,5 +1,6 @@
 """Piper tabanlı akışlı TTS + konuşma sırasında sözünü kesebilme (barge-in)."""
 
+import re
 import subprocess
 import threading
 
@@ -7,6 +8,14 @@ import numpy as np
 import torch
 from piper import PiperVoice
 from silero_vad import load_silero_vad
+
+_MARKDOWN_RE = re.compile(r"[*_`#]+")
+
+
+def _strip_markdown(text: str) -> str:
+    """LLM'e markdown kullanma dense de bazen kullanıyor — Piper '**'i 'yıldız yıldız'
+    diye okur, sesli çıktıya gitmeden temizle (defense in depth)."""
+    return re.sub(r"\s{2,}", " ", _MARKDOWN_RE.sub("", text)).strip()
 
 MODEL_PATH = "models/piper/tr_TR-dfki-medium.onnx"
 SINK = "jarvis_echo_cancel_sink"
@@ -63,7 +72,7 @@ def speak(text: str, barge_in: bool = True) -> bool:
     """Metni akış halinde sentezleyip çalar. Konuşma sırasında mikrofonda ses
     algılanırsa (barge_in=True) playback'i keser. Tamamlandıysa True, kesildiyse False döner."""
     voice = _get_voice()
-    chunks = voice.synthesize(text)
+    chunks = voice.synthesize(_strip_markdown(text))
     try:
         first = next(chunks)
     except StopIteration:
