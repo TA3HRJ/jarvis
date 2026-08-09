@@ -1,63 +1,96 @@
-"""Katman 4: bulut LLM (Claude). Sadece Katman 1-3 bir niyete karar veremediğinde
-çağrılır — muhakeme, kod yazma, çok adımlı görevler için."""
+"""Katman 4: bulut LLM. Sadece Katman 1-3 bir niyete karar veremediğinde çağrılır —
+muhakeme, kod yazma, çok adımlı görevler için.
 
-import anthropic
-from anthropic import beta_tool
+Sağlayıcı `JARVIS_LLM_PROVIDER` ortam değişkeniyle seçilir ("deepseek" | "claude",
+varsayılan "deepseek"). DeepSeek kredisi bitince tek satır değişiklikle Claude'a
+geçilebilir — TTS motoru gibi bir soyutlama arkasında."""
 
-from . import memory
-from .sandbox import run_sandboxed
+import json
+import os
 
-MODEL = "claude-opus-5"
+from .tools import SYSTEM_PROMPT, TOOL_DESCRIPTIONS, TOOL_IMPLS, TOOL_PARAM_NAMES
 
-SYSTEM_PROMPT = (
-    "Sen Jarvis'sin, Erhan'ın Linux masaüstünde çalışan sesli asistanısın. "
-    "Türkçe konuş. Kısa ve net cevaplar ver, sesli okunacak şekilde yaz "
-    "(markdown biçimlendirme, kod bloğu gibi sesli okunamayacak şeyler kullanma). "
-    "Kod çalıştırman gerekirse run_sandboxed_command aracını kullan — izole, "
-    "ağsız bir sandbox'ta çalışır. Kalıcı olarak hatırlanması gereken bir şey "
-    "öğrendiğinde remember aracıyla kaydet, geçmiş bağlam gerektiğinde recall ile ara."
-)
+DEEPSEEK_MODEL = "deepseek-v4-pro"
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+CLAUDE_MODEL = "claude-opus-5"
 
 
-@beta_tool
-def run_sandboxed_command(command: str) -> str:
-    """İzole bir sandbox'ta (ağ erişimi yok, salt-okunur kök dosya sistemi) bir shell komutu çalıştırır.
+def _ask_deepseek(user_message: str, model: str = DEEPSEEK_MODEL) -> str:
+    from openai import OpenAI
 
-    Args:
-        command: Çalıştırılacak shell komutu.
-    """
-    result = run_sandboxed(command)
-    if result["timed_out"]:
-        return "HATA: komut zaman aşımına uğradı."
-    return f"çıkış kodu: {result['return_code']}\nstdout:\n{result['stdout']}\nstderr:\n{result['stderr']}"
+    client = OpenAI(api_key=os.environ["DEEPSEEK_API_KEY"], base_url=DEEPSEEK_BASE_URL)
+
+    tools = []
+    for name, (param, param_desc) in TOOL_PARAM_NAMES.items():
+        tools.append({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": TOOL_DESCRIPTIONS[name],
+                "parameters": {
+                    "type": "object",
+                    "properties": {param: {"type": "string", "description": param_desc}},
+                    "required": [param],
+                },
+            },
+        })
+
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user_message},
+    ]
+
+    for _ in range(10):
+        response = client.chat.completions.create(model=model, messages=messages, tools=tools)
+        msg = response.choices[0].message
+        if not msg.tool_calls:
+            return msg.content or ""
+
+        messages.append(msg.model_dump(exclude_none=True))
+        for call in msg.tool_calls:
+            args = json.loads(call.function.arguments)
+            arg_value = next(iter(args.values())) if args else ""
+            result = TOOL_IMPLS[call.function.name](arg_value)
+            messages.append({
+                "role": "tool",
+                "tool_call_id": call.id,
+                "content": result,
+            })
+
+    return "çok adımlı araç kullanımı tamamlanamadı (limit aşıldı)"
 
 
-@beta_tool
-def remember(text: str) -> str:
-    """Kullanıcı hakkında veya bağlam hakkında kalıcı olarak hatırlanması gereken bir bilgiyi kaydeder.
+def _ask_claude(user_message: str, model: str = CLAUDE_MODEL, effort: str = "medium") -> str:
+    import anthropic
+    from anthropic import beta_tool
 
-    Args:
-        text: Hatırlanacak bilgi, tam cümle halinde.
-    """
-    memory.remember(text)
-    return "kaydedildi"
+    @beta_tool
+    def run_sandboxed_command(command: str) -> str:
+        """İzole bir sandbox'ta (ağ erişimi yok, salt-okunur kök dosya sistemi) bir shell komutu çalıştırır.
 
+        Args:
+            command: Çalıştırılacak shell komutu.
+        """
+        return TOOL_IMPLS["run_sandboxed_command"](command)
 
-@beta_tool
-def recall(query: str) -> str:
-    """Geçmişte kaydedilmiş, sorguyla semantik olarak ilgili bilgileri getirir.
+    @beta_tool
+    def remember(text: str) -> str:
+        """Kullanıcı hakkında veya bağlam hakkında kalıcı olarak hatırlanması gereken bir bilgiyi kaydeder.
 
-    Args:
-        query: Ne hakkında bilgi aranıyor.
-    """
-    results = memory.recall(query, k=5)
-    if not results:
-        return "ilgili bir hafıza bulunamadı"
-    return "\n".join(f"- {r['text']}" for r in results)
+        Args:
+            text: Hatırlanacak bilgi, tam cümle halinde.
+        """
+        return TOOL_IMPLS["remember"](text)
 
+    @beta_tool
+    def recall(query: str) -> str:
+        """Geçmişte kaydedilmiş, sorguyla semantik olarak ilgili bilgileri getirir.
 
-def ask(user_message: str, model: str = MODEL, effort: str = "medium") -> str:
-    """Kullanıcının isteğini bulut LLM'e (Katman 4) yönlendirir, araç döngüsünü çalıştırır."""
+        Args:
+            query: Ne hakkında bilgi aranıyor.
+        """
+        return TOOL_IMPLS["recall"](query)
+
     client = anthropic.Anthropic()
     runner = client.beta.messages.tool_runner(
         model=model,
@@ -74,3 +107,12 @@ def ask(user_message: str, model: str = MODEL, effort: str = "medium") -> str:
             if block.type == "text":
                 last_text = block.text
     return last_text
+
+
+def ask(user_message: str, provider: str | None = None) -> str:
+    provider = provider or os.environ.get("JARVIS_LLM_PROVIDER", "deepseek")
+    if provider == "deepseek":
+        return _ask_deepseek(user_message)
+    elif provider == "claude":
+        return _ask_claude(user_message)
+    raise ValueError(f"bilinmeyen sağlayıcı: {provider}")

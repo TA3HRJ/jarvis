@@ -10,6 +10,7 @@ dependencies = [
     "llama-cpp-python>=0.3.34",
     "nvidia-cublas-cu12>=12.9.2.10",
     "nvidia-cudnn-cu12>=9.24.0.43",
+    "openai>=2.53.0",
     "openwakeword>=0.4.0",
     "piper-tts>=1.6.0",
     "sentence-transformers>=5.7.0",
