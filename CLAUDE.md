@@ -131,3 +131,25 @@ internet kesildiğinde Katman 1-3 çalışmaya devam eder.
 - Jarvis ne kadar GUI otomasyonu yapacak → X11 mi Wayland mi? (Faz 5)
 - **Bilinen sınırlama:** `language="tr"` zorlaması yüzünden cümle içine gömülü İngilizce özel isimler (dizi/film adı vb.) sık yanlış transkribe ediliyor (Faz 7'de canlı testte fark edildi). Kod düzeltmesiyle tam çözülmüyor — muhtemel çözümler (otomatik dil algılama, daha büyük model) ayrı bir değerlendirme gerektiriyor, henüz yapılmadı.
 - **Çözüldü — gecikme sorunu (Faz 7):** Kullanıcı "ciddi bir gecikme" bildirdi, ölçüldü: `route()` tek başına 11+ saniye sürüyordu. Kök neden: OOM düzeltmesi için Katman 3'ü "her kullanımdan hemen sonra boşalt" yapmıştım — bu "boşta kalınca boşalt" değil, fiilen "her seferinde diskten yeniden yükle"ye dönüşmüştü. Düzeltme: gerçek idle-timeout (60sn) + Katman 2 skoru çok düşükse Katman 3'ü hiç denememe + DeepSeek flash'ın varsayılan "thinking" modunu (yüksek çaba) kapatma. Sonuç: soğuk başlangıç (embedding modeli ilk yüklenirken, tek seferlik ~13sn) dışında istek başına ~1.5sn.
+
+## Devir notu (2026-08-09 sonu) — YENİ OTURUM BURADAN BAŞLASIN
+
+Uzun bir oturumda (Faz 0-7) hızlı ardışık düzeltmeler yapıldı ve tekrarlayan hatalar
+fark edildi (aynı `nvidia.cublas.lib.__file__` hatası iki kez, aynı `from src.jarvis
+import main` isim çakışması iki kez, OOM düzeltmesi düşünülmeden gecikme yarattı,
+`barge_in=False` nedeni belirsiz bir şekilde ana döngüye sızmıştı). Kullanıcı haklı
+olarak "kontekst uzadığı için hata mı yapıyorsun" diye sordu — muhtemelen evet, bu
+yüzden temiz bir oturumda dikkatli, aceleye getirilmemiş bir gözden geçirme isteniyor.
+
+**Yeni oturumun ilk işi:** `src/jarvis/main.py` ve `src/jarvis/tts.py`'yi baştan sona,
+bütün halinde, aceleye getirmeden oku ve gözden geçir — özellikle:
+- Barge-in'e eklenen 0.6sn AEC yakınsama toleransı gerçekten işe yaradı mı? **Son canlı
+  testi yapılmadı, kullanıcıdan doğrulama beklenmiyor.**
+- Ana döngünün `pw-record` süreci ile barge-in'in kendi `pw-record` süreci aynı anda
+  aynı AEC kaynağından (`jarvis_echo_cancel_source`) okuyor — bu iki eşzamanlı tüketici
+  durumu hiç sorgulanmadı, olası bir çakışma/kaynak olabilir, araştırılmadı.
+- Genel olarak: son ~1-2 saatteki hızlı düzeltme dizisi (ses kontrolü, barge-in, gecikme)
+  bütün olarak tutarlı mı, yoksa birbirini çürüten parçalar mı var — tek tek değil,
+  sistem olarak değerlendir.
+
+Sistemd servisi (`jarvis-main.service`) hâlâ çalışıyor durumda, canlı sesle test edilebilir.
