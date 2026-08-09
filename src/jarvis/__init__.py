@@ -1,2 +1,4 @@
 def main() -> None:
-    print("Hello from jarvis!")
+    from .main import run
+
+    run()

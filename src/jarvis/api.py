@@ -6,9 +6,8 @@ import os
 
 from fastapi import FastAPI, Header, HTTPException
 
-from .brain import ask
+from .dispatch import handle_command
 from .notify import notify
-from .router import route
 
 app = FastAPI()
 
@@ -32,12 +31,7 @@ def _handle(text: str) -> dict:
     if not text:
         raise HTTPException(400, "text gerekli")
 
-    result = route(text, use_layer3=True)
-    if result.intent:
-        response = f"Niyet: {result.intent}, slotlar: {result.slots} (katman {result.layer})"
-    else:
-        response = ask(text)
-
+    response = handle_command(text)
     notify(response)
     return {"response": response}
 
