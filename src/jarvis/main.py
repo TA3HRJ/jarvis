@@ -6,6 +6,7 @@ import re
 import subprocess
 import tempfile
 import threading
+import time
 import wave
 
 import numpy as np
@@ -152,11 +153,24 @@ def _run_api_server() -> None:
     uvicorn.run(app, host=API_HOST, port=API_PORT, log_level="warning")
 
 
+def _warm_up() -> None:
+    """Embedding modeli + katalog vektörleri + Whisper'ı servis açılışında önceden yükler,
+    ilk gerçek soru/komutta ~13sn'lik soğuk başlangıç gecikmesi olmasın."""
+    from .router import warm_up as warm_up_router
+
+    logger.info("modeller ısıtılıyor (embedding + Whisper)...")
+    t0 = time.time()
+    warm_up_router()
+    _get_whisper_model()
+    logger.info("ısıtma tamamlandı (%.1fsn)", time.time() - t0)
+
+
 def run() -> None:
     from openwakeword.model import Model as WakeModel
     from silero_vad import load_silero_vad
 
     threading.Thread(target=_run_api_server, daemon=True).start()
+    threading.Thread(target=_warm_up, daemon=True).start()
 
     wake_model = WakeModel(wakeword_model_paths=[_find_wake_model_path()])
     vad_model = load_silero_vad()

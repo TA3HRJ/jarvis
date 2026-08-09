@@ -71,6 +71,12 @@ def layer2_match(text: str) -> RouteResult | None:
     return RouteResult(intent=intent.name, slots=slots, layer=2, confidence=best_score)
 
 
+def warm_up() -> None:
+    """Embedding modelini ve katalog vektörlerini önceden yükler — ilk gerçek sorguda
+    ~13sn'lik soğuk başlangıç gecikmesi olmasın diye servis açılışında çağrılır."""
+    _get_catalog_embeddings()
+
+
 def route(text: str, use_layer3: bool = True) -> RouteResult:
     result = layer1_match(text)
     if result is not None:
