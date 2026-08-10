@@ -4,7 +4,7 @@ Türkçe konuş. Kullanıcı Türkçe çalışıyor.
 
 ## Proje amacı
 
-MSI Stealth 15M laptop üzerinde Jarvis tarzı sesli asistan:
+İnce gövdeli, kısıtlı VRAM'li bir Linux dizüstü bilgisayarda Jarvis tarzı sesli asistan:
 - Sürekli dinleme, wake word, konuşma anlamlandırma
 - Sesli geri bildirim (yapılan işleri sesli raporlama)
 - Kod yazma/çalıştırma yeteneği (zorunlu gereksinim)
@@ -15,11 +15,11 @@ MSI Stealth 15M laptop üzerinde Jarvis tarzı sesli asistan:
 
 | Bileşen | Değer | Kısıt |
 |---|---|---|
-| Model | MSI Stealth 15M B12UE/B12UX | ince kasa, termal duvar + fan gürültüsü |
-| CPU | Intel i7-1260P / 1280P (Alder Lake-P, 28W) | sürekli yükte agresif throttle |
+| Kasa | İnce/hafif oyuncu dizüstü | termal duvar + fan gürültüsü |
+| CPU | Intel Core i7, Alder Lake-P nesli (12. nesil mobil, 28W TDP) | sürekli yükte agresif throttle |
 | GPU | RTX 3060 Laptop 75W, **6 GB VRAM** | **en sert kısıt** — ciddi yerel LLM sığmaz |
 | RAM | **16 GB DDR4** (2 slot, 64 GB'a kadar) | yükseltme fiyat nedeniyle **pas geçildi** |
-| Ağ | Wi-Fi 6 AX201, BT 5.2 | yeterli |
+| Ağ | Wi-Fi 6, BT 5.2 | yeterli |
 | Ses | Intel SST + dizi mikrofon | **doğrulanmadı — Faz 0 blokeri** |
 
 ## Verilen kararlar
@@ -84,7 +84,7 @@ internet kesildiğinde Katman 1-3 çalışmaya devam eder.
   - [x] SOF firmware kernel mesajları temiz mi
   - [x] **Mikrofon kayıt kalite testi** — `Dmic0` %100 kazanç kırpıyordu, %50'ye (35) düşürüldü + `alsactl store` ile kalıcı yapıldı (reboot sonrası bir kez sıfırlanmıştı, tekrar uygulandı)
   - [x] AEC testi (hoparlör çalarken eşzamanlı kayıt) — akustik sızıntı var, beklenen (module-echo-cancel Faz 2'de kuruldu)
-  - [x] `nvidia-smi`, `sensors`, `msi-ec` fan kontrolü — `msi-ec` EC firmware'i desteklemiyor, `msi_wmi_platform` salt-okunur çalışıyor (Faz 7'ye ertelendi)
+  - [x] `nvidia-smi`, `sensors`, üretici-özel EC (Embedded Controller) fan kontrol aracı — kernel modülü bu firmware'i desteklemiyor, salt-okunur WMI arayüzü çalışıyor (Faz 7'ye ertelendi)
   - [x] BIOS: VT-x/VT-d, güç/uyku politikası (AC'de uyuma yok, kapak kapalı çalışsın) — VT-x aktif, VT-d proje için gerekmiyor, lid policy `10-jarvis-lid.conf` aktif
   - [x] BTRFS snapshot yapılandırması doğrula — snapper `root` + timeline/cleanup timer aktif
 - [x] **Faz 1 — Temel ortam**: uv + pinlenmiş Python 3.12, CUDA 13.3 + cuDNN 9.25, git, proje iskeleti
@@ -100,8 +100,8 @@ internet kesildiğinde Katman 1-3 çalışmaya devam eder.
 - [~] **Faz 6 — Uzaktan dispatch** (sunucu tarafı bitti, telefon tarafı kullanıcıda bekliyor — yukarıya bak):
   - [x] **FastAPI + token auth** (`src/jarvis/api.py`): `POST /command` — token doğrulama (`JARVIS_API_TOKEN`, `.env`'de), metni Katman 1-3 yönlendiricisine sokuyor, eşleşmezse Katman 4'e (bulut LLM) düşüyor. Canlı test edildi: yanlış token 401, `saat kaç` katman 1'de doğru eşleşti, açık uçlu bir kod yazma isteği katman 4'e düşüp sandbox'ta gerçekten çalıştı.
   - [x] **ntfy push** (`src/jarvis/notify.py`): her komut yanıtı `ntfy.sh` üzerinden push bildirimi olarak da gidiyor. Rastgele/tahmin edilemez konu adı (`JARVIS_NTFY_TOPIC`, `.env`'de) güvenlik sınırı — ntfy.sh herkese açık, konuyu bilmeyen okuyamaz. Canlı test edildi (gönderim başarılı).
-  - [x] **Tailscale** — kuruldu, hesap oluşturuldu/giriş yapıldı, cihaz yetkilendirildi. Tailscale IP: `100.100.59.67`. Not: `systemd-resolved` + `NetworkManager` yanlış bağlı, MagicDNS muhtemelen çalışmıyor (IP ile erişim sorunsuz, hostname ile denenmedi) — Faz 7'de gerekirse düzeltilir.
-  - [x] **API sunucusu systemd user servisi olarak çalışıyor** (`~/.config/systemd/user/jarvis-api.service`, `systemctl --user enable --now jarvis-api`), sadece Tailscale arayüzüne bind (`100.100.59.67:8765`), `.env`'den `EnvironmentFile` ile okunuyor. Manuel terminalden `uv run uvicorn` başlatmayı defalarca denedik, kullanıcının terminali tekrarlayan şekilde "resetlendi" (kök neden bulunamadı) — systemd servisi bu sorunu tamamen atladı, ayrıca kalıcılık/otomatik yeniden başlatma da bedava geldi (Faz 7'nin bir parçası erkenden bitti). Uçtan uca test edildi: Tailscale IP üzerinden `/health` ve `/command` (katman 1 eşleşmesi) çalışıyor.
+  - [x] **Tailscale** — kuruldu, hesap oluşturuldu/giriş yapıldı, cihaz yetkilendirildi. Tailscale IP `.env`'deki `JARVIS_API_HOST`'ta tutuluyor (gitignore'da, repoda yok). Not: `systemd-resolved` + `NetworkManager` yanlış bağlı, MagicDNS muhtemelen çalışmıyor (IP ile erişim sorunsuz, hostname ile denenmedi) — Faz 7'de gerekirse düzeltilir.
+  - [x] **API sunucusu systemd user servisi olarak çalışıyor** (`~/.config/systemd/user/jarvis-api.service`, `systemctl --user enable --now jarvis-api`), sadece Tailscale arayüzüne bind (`JARVIS_API_HOST:8765`), `.env`'den `EnvironmentFile` ile okunuyor. Manuel terminalden `uv run uvicorn` başlatmayı defalarca denedik, kullanıcının terminali tekrarlayan şekilde "resetlendi" (kök neden bulunamadı) — systemd servisi bu sorunu tamamen atladı, ayrıca kalıcılık/otomatik yeniden başlatma da bedava geldi (Faz 7'nin bir parçası erkenden bitti). Uçtan uca test edildi: Tailscale IP üzerinden `/health` ve `/command` (katman 1 eşleşmesi) çalışıyor.
   - [~] **iOS Shortcuts + Siri** — temel bağlantı doğrulandı (telefon → Tailscale → sunucu → ntfy bildirimi tek kelimelik testte çalıştı), ama **kurulum kullanıcıda tamamlanmadı, bilinen bir hata var**: Dictate Text çıktısı URL'ye kodlanmadan (raw) eklendiğinde boşlukta kesiliyor, sadece ilk kelime gidiyor ("Hey Jarvis nasılsın" → sunucuya sadece "Hey" ulaşıyor). Düzeltme biliniyor ama henüz doğrulanmadı: sıra **Dictate Text → URL Encode (girişi: Dictate Text) → Get Contents of URL (URL'deki `text=`'e URL Encode çıktısı) → Get Dictionary Value (key: response) → Speak Text** olmalı. Ayrıca boşta kalma zaman aşımıyla makine uykuya geçip Jarvis'i erişilemez yapıyordu — kullanıcıya Sistem Ayarları → Güç Yönetimi'nden "Oturumu askıya al: Asla" (AC'de) ayarlaması söylendi, doğrulanmadı. **Kullanıcı tarafında bekleyen iş, sonraki oturumda tamamlanacak.**
 - [x] **Faz 7 — Servisleştirme + sertleştirme** (yetki allowlist kasıtlı olarak ertelendi, gerçek bir tehdit ortaya çıkınca eklenecek):
   - [x] **Ana orkestratör yazıldı** (`src/jarvis/main.py`): mikrofon (`jarvis_echo_cancel_source`) → openWakeWord (`hey_jarvis`, 80ms çerçeveler) → Silero VAD ile konuşma sonu algılama → faster-whisper `medium` transkripsiyon → `dispatch.handle_command` → Piper TTS. Tek süreç (CLAUDE.md kural #2). `jarvis` paketinin `__init__.py`'deki placeholder `main()` gerçek orkestratöre bağlandı.

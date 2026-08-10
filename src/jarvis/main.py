@@ -18,8 +18,8 @@ from .tts import speak
 
 logger = get_logger("jarvis.main")
 
-API_HOST = "100.100.59.67"
-API_PORT = 8765
+API_HOST = os.environ["JARVIS_API_HOST"]  # Tailscale IP, .env'de (gitignore'da)
+API_PORT = int(os.environ.get("JARVIS_API_PORT", "8765"))
 
 SOURCE = "jarvis_echo_cancel_source"
 SAMPLE_RATE = 16000

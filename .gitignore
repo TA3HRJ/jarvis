@@ -2,8 +2,15 @@
 __pycache__/
 *.pyc
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+secrets.*
 *.wav
 *.gguf
 *.bin
 models/
 jarvis_memory.db
+jarvis_memory.db-*
