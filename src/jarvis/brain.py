@@ -3,7 +3,13 @@ muhakeme, kod yazma, çok adımlı görevler için.
 
 Sağlayıcı `JARVIS_LLM_PROVIDER` ortam değişkeniyle seçilir ("deepseek" | "claude",
 varsayılan "deepseek"). DeepSeek kredisi bitince tek satır değişiklikle Claude'a
-geçilebilir — TTS motoru gibi bir soyutlama arkasında."""
+geçilebilir — TTS motoru gibi bir soyutlama arkasında.
+
+Bilinçli tasarım kararı: her `ask()` çağrısı `messages`'ı sıfırdan kurar, komutlar
+arası kalıcı sohbet geçmişi tutmaz (bkz. CLAUDE.md "Bağlam doygunluğu riski").
+Kalıcı çok-turlu hafıza eklenmeden önce bir bağlam-uzunluğu sınırı/periyodik
+sıfırlama tasarlanmalı — aksi halde uzun bir oturum SYSTEM_PROMPT'taki
+kısıtlamaları sessizce aşındırabilir."""
 
 import json
 import os

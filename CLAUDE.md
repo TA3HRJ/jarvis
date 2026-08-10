@@ -122,6 +122,9 @@ internet kesildiğinde Katman 1-3 çalışmaya devam eder.
 - `ydotool`/`xdotool` sistem geneli sentetik girdi üretir. iPhone'dan gelen bir komut laptopta rastgele tuş basabilir hale gelir. Masaüstü kontrol araçları **en dar yetkiyle ve açık onayla** çalışacak.
 - İnternete açık uç YOK. Uzaktan erişim yalnızca Tailscale mesh üzerinden.
 - Rolling release: kritik güncelleme öncesi snapshot; ses yığını kırılırsa snapshot'tan dön.
+- **Bağlam doygunluğu riski** (JarvisOS araştırma projesinin tehdit taksonomisinden esinlenildi — bkz. jarvisoslinux.org: uzun bir LLM oturumu, ortasında güvenlik kısıtlamalarını sessizce gevşetebilir):
+  - **Jarvis'in kendi bulut-LLM çağrıları (`brain.py:ask()`) buna yapısal olarak bağışık — bilinçli tasarım kararı, tesadüf değil.** Her komut için `messages` listesi sıfırdan kuruluyor (sadece `SYSTEM_PROMPT` + o anki kullanıcı metni), komutlar arası kalıcı sohbet geçmişi YOK. Bir komuttaki araç-çağrı döngüsü de sınırlı (DeepSeek: 10 tur; Claude: `tool_runner`'ın kendi sınırı) ve sistem promptu döngü boyunca hep en üstte kalıyor, asla özetlenip düşmüyor. **Uyarı:** ileride komutlar arası kalıcı sohbet hafızası eklenirse (örn. çok turlu diyalog için) bu bağışıklık kaybolur — o noktada açık bir bağlam-uzunluğu sınırı/periyodik sıfırlama eklenmeden yapılmamalı.
+  - **Bu geliştirme oturumlarında (Claude Code ile) geçerli, orada yapısal koruma yok.** 2026-08-09 devir notunda gözlemlenen tekrarlayan hatalar (aynı `nvidia.cublas` hatası iki kez, `barge_in=False` sızıntısı) tam olarak bu. Kural: bir oturumda **aynı hata ikinci kez** olursa veya davranış sebepsiz değişirse, konuyu bitirmeye çalışmak yerine devir notu yazıp yeni/temiz bir oturumda devam et — bu artık tek seferlik bir not değil, standart pratik.
 
 ## Açık sorular
 
