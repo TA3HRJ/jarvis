@@ -9,6 +9,10 @@ import torch
 from piper import PiperVoice
 from silero_vad import load_silero_vad
 
+from .logsetup import get_logger
+
+logger = get_logger("jarvis.tts")
+
 _MARKDOWN_RE = re.compile(r"[*_`#]+")
 
 
@@ -69,6 +73,7 @@ def _watch_for_speech(interrupted: threading.Event, playback: subprocess.Popen) 
             if frame_count <= grace_frames:
                 continue
             if prob > BARGE_IN_THRESHOLD:
+                logger.info("barge-in: kullanıcı sözünü kesti (prob=%.2f, %.1fsn'de)", prob, frame_count * VAD_FRAME_SAMPLES / VAD_SAMPLE_RATE)
                 interrupted.set()
                 playback.terminate()
                 break

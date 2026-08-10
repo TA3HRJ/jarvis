@@ -54,7 +54,8 @@
       "Bash(pacman -Q pipewire-jack)",
       "Bash(command -v pkexec)",
       "Bash(pkexec sh -c 'mkdir -p /etc/systemd/logind.conf.d && printf \"[Login]\\\\nHandleLidSwitch=suspend\\\\nHandleLidSwitchExternalPower=ignore\\\\n\" > /etc/systemd/logind.conf.d/10-jarvis-lid.conf && systemctl restart systemd-logind')",
-      "Bash(echo \"EXIT_CODE:$?\")"
+      "Bash(echo \"EXIT_CODE:$?\")",
+      "Bash(python3 -m py_compile src/jarvis/main.py)"
     ]
   }
 }

@@ -142,6 +142,28 @@ def _transcribe(audio: np.ndarray) -> str:
         return " ".join(s.text.strip() for s in kept).strip()
 
 
+def _speak_and_drain(proc: subprocess.Popen, response: str) -> None:
+    """speak() ana thread'i bloke ederken proc'un pipe'ını kimse okumuyordu — OS pipe
+    buffer'ı (varsayılan 64KiB, ~2sn ses) dolunca pw-record'un stdout'a write()'ı
+    bloke oluyordu, speak() dönünce de ana döngü TTS sırasında biriken bayat sesi
+    okuyordu. speak() süresince proc'u ayrı bir thread'de boşalt (barge-in'in kendi
+    pw-record'undan bağımsız, mevcut proc'u drenaj ediyor — yeni süreç açmıyor)."""
+    stop = threading.Event()
+
+    def _drain() -> None:
+        while not stop.is_set():
+            if _read_frame(proc, WAKE_FRAME_SAMPLES) is None:
+                break
+
+    drainer = threading.Thread(target=_drain, daemon=True)
+    drainer.start()
+    try:
+        speak(response, barge_in=True)
+    finally:
+        stop.set()
+        drainer.join(timeout=1)
+
+
 def _run_api_server() -> None:
     """Uzaktan dispatch API'sini (Faz 6) aynı süreç içinde, arka plan thread'inde çalıştırır —
     ayrı bir süreç olarak çalıştırmak router/brain modellerini iki kere yükletiyordu (CUDA OOM'a
@@ -197,7 +219,7 @@ def run() -> None:
                 logger.info("duyulan: %r", text)
                 if text:
                     response = handle_command(text, source="local")
-                    speak(response, barge_in=True)
+                    _speak_and_drain(proc, response)
     finally:
         proc.terminate()
 
