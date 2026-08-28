@@ -156,3 +156,15 @@ bütün halinde, aceleye getirmeden oku ve gözden geçir — özellikle:
   sistem olarak değerlendir.
 
 Sistemd servisi (`jarvis-main.service`) hâlâ çalışıyor durumda, canlı sesle test edilebilir.
+
+## Git kimliği
+
+Kimlik bu depoda **yerel** olarak ayarlı (`.git/config`); makinede global `.gitconfig` yok:
+
+```
+user.name  = TA3HRJ
+user.email = TA3HRJ@users.noreply.github.com
+```
+
+Özel e-posta adresiyle commit atma; noreply adresi hem gerçek adresi gizler hem de
+commit'lerin GitHub hesabına düzgün atfedilmesini sağlar.
