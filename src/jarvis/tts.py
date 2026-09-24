@@ -1,17 +1,12 @@
-"""Piper tabanlı akışlı TTS + konuşma sırasında sözünü kesebilme (barge-in)."""
+"""Piper tabanlı akışlı TTS. Konuşmayı kesme (barge-in) kararı burada verilmez — çağıran
+bir `interrupt` Event'i verir, set edilince playback kesilir (bkz. main.py: TTS sırasında
+wake word dinleme)."""
 
 import re
 import subprocess
 import threading
 
-import numpy as np
-import torch
 from piper import PiperVoice
-from silero_vad import load_silero_vad
-
-from .logsetup import get_logger
-
-logger = get_logger("jarvis.tts")
 
 _MARKDOWN_RE = re.compile(r"[*_`#]+")
 
@@ -23,17 +18,9 @@ def _strip_markdown(text: str) -> str:
 
 MODEL_PATH = "models/piper/tr_TR-dfki-medium.onnx"
 SINK = "jarvis_echo_cancel_sink"
-SOURCE = "jarvis_echo_cancel_source"
-VAD_SAMPLE_RATE = 16000
-VAD_FRAME_SAMPLES = 512
-BARGE_IN_THRESHOLD = 0.6
-# AEC (yankı bastırma) playback başlar başlamaz henüz yakınsamamış olabiliyor — o kısa
-# pencerede Jarvis'in kendi sesi mikrofona sızıp barge-in'i yanlışlıkla tetikliyordu
-# (canlı testte: hiç konuşamadan hep kesiliyordu). İlk bu kadar saniyeyi göz ardı et.
-BARGE_IN_GRACE_SECONDS = 0.6
+INTERRUPT_POLL_SECONDS = 0.05
 
 _voice: PiperVoice | None = None
-_vad_model = None
 
 
 def _get_voice() -> PiperVoice:
@@ -43,49 +30,9 @@ def _get_voice() -> PiperVoice:
     return _voice
 
 
-def _get_vad_model():
-    global _vad_model
-    if _vad_model is None:
-        _vad_model = load_silero_vad()
-    return _vad_model
-
-
-def _watch_for_speech(interrupted: threading.Event, playback: subprocess.Popen) -> None:
-    model = _get_vad_model()
-    model.reset_states()  # önceki playback'in RNN durumu taşınmasın
-    frame_bytes = VAD_FRAME_SAMPLES * 2
-    rec = subprocess.Popen(
-        [
-            "pw-record", "--raw", "--target", SOURCE,
-            "--channels", "1", "--rate", str(VAD_SAMPLE_RATE), "--format", "s16", "-",
-        ],
-        stdout=subprocess.PIPE,
-    )
-    grace_frames = int(BARGE_IN_GRACE_SECONDS * VAD_SAMPLE_RATE / VAD_FRAME_SAMPLES)
-    frame_count = 0
-    try:
-        while playback.poll() is None:
-            data = rec.stdout.read(frame_bytes)
-            if len(data) < frame_bytes:
-                break
-            frame_count += 1
-            audio = torch.from_numpy(np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0)
-            prob = model(audio, VAD_SAMPLE_RATE).item()
-            if frame_count <= grace_frames:
-                continue
-            if prob > BARGE_IN_THRESHOLD:
-                logger.info("barge-in: kullanıcı sözünü kesti (prob=%.2f, %.1fsn'de)", prob, frame_count * VAD_FRAME_SAMPLES / VAD_SAMPLE_RATE)
-                interrupted.set()
-                playback.terminate()
-                break
-    finally:
-        rec.terminate()
-        rec.wait()
-
-
-def speak(text: str, barge_in: bool = True) -> bool:
-    """Metni akış halinde sentezleyip çalar. Konuşma sırasında mikrofonda ses
-    algılanırsa (barge_in=True) playback'i keser. Tamamlandıysa True, kesildiyse False döner."""
+def speak(text: str, interrupt: threading.Event | None = None) -> bool:
+    """Metni akış halinde sentezleyip çalar. `interrupt` set edilirse playback'i hemen keser.
+    Tamamlandıysa True, kesildiyse False döner."""
     voice = _get_voice()
     chunks = voice.synthesize(_strip_markdown(text))
     try:
@@ -102,16 +49,24 @@ def speak(text: str, barge_in: bool = True) -> bool:
         stdin=subprocess.PIPE,
     )
 
-    interrupted = threading.Event()
+    done = threading.Event()
     watcher = None
-    if barge_in:
-        watcher = threading.Thread(target=_watch_for_speech, args=(interrupted, proc), daemon=True)
+    if interrupt is not None:
+        # Yazma döngüsü Piper'ın sonraki cümleyi sentezlemesini beklerken bloke olabilir —
+        # kesme anında sesi durdurmak için playback'i ayrı bir thread'den sonlandır.
+        def _watch() -> None:
+            while not done.is_set():
+                if interrupt.wait(INTERRUPT_POLL_SECONDS):
+                    proc.terminate()
+                    return
+
+        watcher = threading.Thread(target=_watch, daemon=True)
         watcher.start()
 
     try:
         proc.stdin.write(first.audio_int16_bytes)
         for chunk in chunks:
-            if interrupted.is_set():
+            if interrupt is not None and interrupt.is_set():
                 break
             proc.stdin.write(chunk.audio_int16_bytes)
     except BrokenPipeError:
@@ -122,11 +77,9 @@ def speak(text: str, barge_in: bool = True) -> bool:
         except Exception:
             pass
         proc.wait()
+        done.set()
 
     if watcher is not None:
-        # İzleyici playback.poll() ile kendiliğinden çıkar (en fazla bir VAD karesi, ~32ms).
-        # Burada interrupted.set() YAPILMAMALI — önceden yapılıyordu ve speak() barge_in=True
-        # iken kesilmese bile her zaman False dönüyordu.
         watcher.join(timeout=1)
 
-    return not interrupted.is_set()
+    return not (interrupt is not None and interrupt.is_set())

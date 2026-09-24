@@ -42,6 +42,9 @@ _WAKE_PREFIX_RE = re.compile(
 )
 
 
+_SELF_NAME_RE = re.compile(r"jarvis", re.IGNORECASE)
+
+
 def _strip_wake_prefix(text: str) -> str:
     stripped = _WAKE_PREFIX_RE.sub("", text, count=1).strip()
     return stripped if stripped else text
@@ -92,11 +95,12 @@ def _read_frame(proc: subprocess.Popen, n_samples: int) -> np.ndarray | None:
 
 def _flush_wake_model(wake_model) -> None:
     """openWakeWord skoru son ~1.3sn'lik (16 kare) embedding penceresinden üretir ve bu
-    pencere sadece predict() çağrıldıkça ilerler. Komut yakalama + TTS boyunca modele ses
-    beslenmediği için döngüye dönüldüğünde pencere hâlâ "Hey Jarvis"i içeriyor — ilk kare
-    yine eşiği aşıp hayalet bir ikinci tetiklenme üretir (ardından 8sn boş kayıt + Whisper'ın
-    sessizlikte halüsinasyon riski). 0.4.0'daki reset() sadece skor tamponunu temizliyor,
-    öznitelik tamponunu değil — pencereyi sessizlikle doldurup öyle sıfırla."""
+    pencere sadece predict() çağrıldıkça ilerler. Tetiklenmeden sonra (komut kaydı boyunca
+    model beslenmiyor) pencere hâlâ "Hey Jarvis"i içeriyor — bir sonraki predict() yine eşiği
+    aşıp hayalet bir tetiklenme üretir (TTS sırasında sahte barge-in, ya da ana döngüde 8sn
+    boş kayıt + Whisper'ın sessizlikte halüsinasyon riski). 0.4.0'daki reset() sadece skor
+    tamponunu temizliyor, öznitelik tamponunu değil — pencereyi sessizlikle doldurup öyle
+    sıfırla."""
     silence = np.zeros(WAKE_FRAME_SAMPLES, dtype=np.int16)
     for _ in range(int(WAKE_FLUSH_SECONDS * SAMPLE_RATE / WAKE_FRAME_SAMPLES)):
         wake_model.predict(silence)
@@ -159,37 +163,63 @@ def _transcribe(audio: np.ndarray) -> str:
         return " ".join(s.text.strip() for s in kept).strip()
 
 
-def _speak_and_drain(proc: subprocess.Popen, response: str) -> None:
-    """speak() ana thread'i bloke ederken proc'un pipe'ını kimse okumuyordu — OS pipe
-    buffer'ı (varsayılan 64KiB, ~2sn ses) dolunca pw-record'un stdout'a write()'ı
-    bloke oluyordu, speak() dönünce de ana döngü TTS sırasında biriken bayat sesi
-    okuyordu. speak() süresince proc'u ayrı bir thread'de boşalt (barge-in'in kendi
-    pw-record'undan bağımsız, mevcut proc'u drenaj ediyor — yeni süreç açmıyor)."""
-    stop = threading.Event()
+def _speak_with_wake_barge_in(proc: subprocess.Popen, wake_model, response: str) -> bool:
+    """Yanıtı seslendirirken ana mikrofon akışını wake modeline besler; "Hey Jarvis"
+    duyulursa playback'i keser. Kesildiyse True döner (çağıran doğrudan dinlemeye geçer).
 
-    def _drain() -> None:
+    Neden VAD değil wake word: eski barge-in ikinci bir pw-record + Silero VAD ile "konuşma
+    var mı" diye bakıyordu — ama Jarvis'in kendi sesi de konuşma, AEC'den sızan her yankı
+    kesmeyi tetikliyordu (0.6sn tolerans bunu yamamaya çalışıyordu). Kendi sesi "Hey Jarvis"
+    değil. Ayrıca bu okuma, speak() sürerken proc'un pipe'ını da boşaltıyor (dolarsa
+    pw-record bloke olur ve TTS sonrası bayat ses okunurdu).
+
+    Önkoşul: wake_model önceden _flush_wake_model() ile temizlenmiş olmalı, yoksa
+    penceredeki ilk "Hey Jarvis" anında sahte bir kesme üretir.
+
+    İstisna: hey_jarvis modeli "Hey" olmadan tek başına "Jarvis"te de tetikleniyor (sentetik
+    sesle ölçüldü: "Ben Jarvis" skor 1.00, -12dB'de bile) — yanıt kendi adını içeriyorsa
+    Jarvis kendi sözünü keserdi. Metin önceden bilindiği için o yanıtta barge-in kapatılır
+    (akış yine boşaltılır, ama modele beslenmez; pencere temiz kalır)."""
+    interrupt = threading.Event()
+    stop = threading.Event()
+    barge_in = not _SELF_NAME_RE.search(response)
+    if not barge_in:
+        logger.info("yanıt 'Jarvis' içeriyor, bu yanıtta barge-in kapalı")
+
+    def _listen() -> None:
         while not stop.is_set():
-            if _read_frame(proc, WAKE_FRAME_SAMPLES) is None:
+            frame = _read_frame(proc, WAKE_FRAME_SAMPLES)
+            if frame is None:
+                break
+            if not barge_in:
+                continue
+            score = wake_model.predict(frame).get(WAKE_MODEL_NAME, 0.0)
+            if score > WAKE_THRESHOLD:
+                logger.info("barge-in: konuşurken wake word algılandı (skor=%.3f)", score)
+                interrupt.set()
                 break
 
-    drainer = threading.Thread(target=_drain, daemon=True)
-    drainer.start()
+    listener = threading.Thread(target=_listen, daemon=True)
+    listener.start()
     try:
-        speak(response, barge_in=True)
+        speak(response, interrupt=interrupt)
     finally:
         stop.set()
-        drainer.join(timeout=1)
+        listener.join(timeout=1)
+    return interrupt.is_set()
 
 
-def _listen_and_respond(proc: subprocess.Popen, vad_model) -> None:
+def _listen_and_respond(proc: subprocess.Popen, vad_model, wake_model) -> bool:
+    """Bir komut turu: kayıt -> STT -> yönlendirici -> TTS. Yanıt "Hey Jarvis" ile
+    kesildiyse True döner (yeni bir tur başlamalı)."""
     utterance = _capture_utterance(proc, vad_model)
     if len(utterance) < SAMPLE_RATE * MIN_UTTERANCE_SECONDS:
         logger.info("çok kısa/boş konuşma, atlanıyor")
-        return
+        return False
     text = _strip_wake_prefix(_transcribe(utterance))
     logger.info("duyulan: %r", text)
     if not text:
-        return
+        return False
     # Katman 4 ağa çıkıyor — internet yokken/API hata verince istisna ana döngüden
     # taşıp servisi düşürüyordu (her bulut isteğinde çök + ~15sn yeniden ısınma).
     try:
@@ -197,7 +227,7 @@ def _listen_and_respond(proc: subprocess.Popen, vad_model) -> None:
     except Exception:
         logger.exception("komut işlenirken hata: %r", text)
         response = "Bir hata oluştu, isteğini tamamlayamadım."
-    _speak_and_drain(proc, response)
+    return _speak_with_wake_barge_in(proc, wake_model, response)
 
 
 def _run_api_server() -> None:
@@ -247,10 +277,16 @@ def run() -> None:
                 logger.debug("wake skoru: %.3f", score)
             if score > WAKE_THRESHOLD:
                 logger.info("wake word algılandı (skor=%.3f), dinleniyor...", score)
-                try:
-                    _listen_and_respond(proc, vad_model)
-                finally:
+                # Her tur başında temizle: model TTS sırasında barge-in için dinliyor ve
+                # penceresinde tetikleyen "Hey Jarvis" duruyor. Temizleme ~200ms sürüyor,
+                # bu arada gelen ses pipe'ta birikiyor (kaybolmuyor). Tur bitince ayrıca
+                # temizlemeye gerek yok: TTS boyunca model gerçek sesle beslendi (ya da
+                # erken çıkışta az önce temizlendi), pencere güncel.
+                while True:
                     _flush_wake_model(wake_model)
+                    if not _listen_and_respond(proc, vad_model, wake_model):
+                        break
+                    logger.info("barge-in sonrası yeni komut dinleniyor...")
     finally:
         proc.terminate()
 

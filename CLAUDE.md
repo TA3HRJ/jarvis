@@ -89,7 +89,7 @@ internet kesildiğinde Katman 1-3 çalışmaya devam eder.
   - [x] BTRFS snapshot yapılandırması doğrula — snapper `root` + timeline/cleanup timer aktif
 - [x] **Faz 1 — Temel ortam**: uv + pinlenmiş Python 3.12, CUDA 13.3 + cuDNN 9.25, git, proje iskeleti
 - [x] **Faz 2 — Kulak**: PipeWire echo-cancel modülü (`jarvis_echo_cancel_source/sink`), Silero VAD, openWakeWord (bundled `hey_jarvis_v0.1` modeli hazır), faster-whisper `medium` GPU'da doğrulandı — `ctranslate2` CUDA 12 ABI istiyor, sistem CUDA 13 ile çakışıyor: `nvidia-cublas-cu12`/`nvidia-cudnn-cu12` proje bağımlılığı olarak eklendi, çalıştırırken `LD_LIBRARY_PATH` bu paketlerin `lib/` dizinlerini göstermeli
-- [x] **Faz 3 — Ağız**: Piper `tr_TR-dfki-medium` sesi, `src/jarvis/tts.py` — sentence-chunk streaming (`PiperVoice.synthesize()` iterator → `pw-cat --raw` stdin), barge-in (paralel thread'de `pw-record` + Silero VAD, konuşma algılanınca playback subprocess'i `terminate()`) — ikisi de canlı testte doğrulandı
+- [x] **Faz 3 — Ağız**: Piper `tr_TR-dfki-medium` sesi, `src/jarvis/tts.py` — sentence-chunk streaming (`PiperVoice.synthesize()` iterator → `pw-cat --raw` stdin), barge-in — ikisi de canlı testte doğrulandı. **Barge-in 2026-09-25'te yeniden tasarlandı:** eskiden ikinci bir `pw-record` + Silero VAD "konuşma var mı" diye bakıyordu (Jarvis'in kendi sesi de konuşma → kendini kesiyordu); artık TTS sırasında ana mikrofon akışı wake modeline beslenir, "Hey Jarvis" playback'i keser ve doğrudan yeni komut dinlenir (`main.py:_speak_with_wake_barge_in`, `tts.speak(interrupt=Event)`)
 - [x] **Faz 4 — Yönlendirici**: `src/jarvis/catalog.py` (komut kataloğu: 7 örnek niyet, regex + örnek ifadeler + slotlar), `src/jarvis/router.py` (Katman 1 regex → Katman 2 embedding → Katman 3 yerel LLM zinciri), `src/jarvis/layer3.py` (Qwen2.5-3B-Instruct Q4_K_M, GPU tam offload, JSON-schema ile kısıtlanmış çıktı — "beyin değil" sınırı kod seviyesinde uygulanıyor). Üçü de canlı test edildi ve çalışıyor: Katman 1 tam eşleşmede (`saat kaç` → conf 1.0), Katman 2 parafrazda güçlü (`şu an saati söyler misin` → conf 0.96, `...kilitler misin acaba` → conf 0.85, eşik 0.72). **Dürüst not:** Katman 3'ün Türkçe konuşma dili/saat ifadelerinde güvenilirliği düşük — net cümlelerde (`alarm kur saat 07:30`) doğru çalışıyor, ama "yedi otuzda" gibi günlük ifadeleri yanlış saatle (17:30) eşleştirdi ve bazı net niyetleri (`Ankara'da hava durumu ne alemde`) "belirsiz" işaretledi. Bu, projenin kendi tasarımıyla tutarlı (3B küçük model, "SADECE niyet sınıflandırma... Beyin DEĞİL") — zor/belirsiz durumlar Faz 5'teki bulut LLM'e (Katman 4) düşecek. Embedding modeli plandaki "~100MB" tahmininden büyük çıktı: `paraphrase-multilingual-MiniLM-L12-v2` gerçekte ~458MB (CPU'da çalışıyor, VRAM bütçesini etkilemiyor).
 - [x] **Faz 5 — Beyin** (MCP kasıtlı olarak ertelendi, ihtiyaç netleşince eklenecek — bloklayıcı değil):
   - [x] **Kod çalıştırma sandbox'ı** (`src/jarvis/sandbox.py`): `bwrap` ile izole — salt-okunur kök fs, ağ yok, ayrı çalışma dizini. Test edildi: ağ izolasyonu, yazma izolasyonu, workdir yazılabilirliği doğrulandı.
@@ -182,18 +182,32 @@ Düzeltilenler:
 
 Değerlendirilen ama DEĞİŞTİRİLMEYENLER:
 - **İki `pw-record` aynı AEC kaynağında:** PipeWire bir kaynağı birden çok yakalama akışına
-  dağıtır, çakışma yok. Ama gereksiz: ana akış TTS boyunca zaten drenaj ediliyor.
-- **Barge-in 0.6sn toleransı:** kanıtlanmadı. Kontrol: `journalctl --user -u jarvis-main.service | grep barge-in`
-  — kesilme süreleri hep ~0.6-0.9sn ise sorun yakınsama değil kalıcı yankı sızıntısıdır ve tolerans işe yaramıyor.
-- **Tasarım önerisi (kullanıcı kararı bekliyor):** VAD tabanlı barge-in yerine wake-word tabanlı
-  barge-in — TTS sırasında drenaj edilen ana akış wake modeline beslenir, "Hey Jarvis" playback'i
-  keser ve doğrudan dinlemeye geçer. Jarvis'in kendi sesi "konuşma"dır (VAD her zaman tetiklenmeye
-  açık) ama "Hey Jarvis" değildir. İkinci `pw-record`, ikinci VAD, tolerans hilesi ortadan kalkar;
-  şu an barge-in sonrası kullanıcının ayrıca "Hey Jarvis" demesi gereken UX sorunu da çözülür.
+  dağıtır, çakışma yok. Ama gereksizdi — wake-word barge-in ile ikincisi kaldırıldı (aşağıya bak).
 - **VRAM:** ısıtma Whisper'ı kalıcı yüklüyor, Katman 3 kullanımdan sonra 60sn kalıyor — o pencerede
   ikisi birlikte GPU'da (CLAUDE.md'deki OOM kombinasyonu). Katman 3'e düşen bir komuttan hemen sonra
   `nvidia-smi` ile ölçülmeli.
 - Wake word sonrası konuşma hiç başlamazsa 8sn bekleniyor — ayrı bir "konuşma başlama" zaman aşımı (~3sn) düşünülebilir.
+
+### Wake-word barge-in uygulandı (2026-09-25)
+
+VAD tabanlı barge-in (ikinci `pw-record` + Silero VAD + 0.6sn tolerans) kaldırıldı. TTS
+sırasında ana akış wake modeline beslenir; "Hey Jarvis" playback'i keser ve doğrudan yeni
+komut dinlenir (eskiden kestikten sonra ayrıca "Hey Jarvis" demek gerekiyordu). Her komut
+turunun başında `_flush_wake_model()` şart — yoksa tetikleyen "Hey Jarvis" TTS başlar başlamaz
+sahte kesme üretir.
+
+**Bulgu — model tek başına "Jarvis"te de tetikleniyor** ("Hey" olmadan; "Ben Jarvis" skor 1.00,
+-12dB'de bile, ses seviyesinden neredeyse bağımsız). Yanıt kendi adını içerirse Jarvis kendi
+sözünü keserdi. Çözüm: yanıt metninde "jarvis" geçiyorsa **o yanıtta barge-in kapalı** (metin
+önceden bilindiği için deterministik). Bedeli: o tek yanıt kesilemez. İleride sık rahatsız
+ederse LLM'e kendi adını söylememesi söylenebilir ya da AEC'nin gerçek bastırması ölçülüp
+kural gevşetilebilir.
+
+Windows'ta gerçek openWakeWord 0.4.0 + sentetik sesle test edildi (6 vaka, 2 tur, hepsi geçti):
+kullanıcı "Hey Jarvis" → keser; sessiz oda → kesmez; temizleme yapılmazsa → sahte kesme (kontrol);
+adını içeren yanıt → kesmez; adsız Türkçe yanıt, kendi sesi → kesmez. `tts.speak()` kesme
+mantığı sahte Piper/`pw-cat` ile test edildi (1.0sn'de kesme → 1.1sn'de durdu, `False` döndü).
+**Laptopta gerçek mikrofon + AEC + Piper sesiyle canlı test edilmedi.**
 
 ## Git kimliği
 

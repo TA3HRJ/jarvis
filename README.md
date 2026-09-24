@@ -39,7 +39,7 @@ VRAM bütçesi: Whisper `medium` int8 (~1.5-2 GB) + Katman 3'ün 3B Q4 modeli (~
 ## Bileşenler
 
 - **STT:** faster-whisper `medium` int8, GPU'da
-- **TTS:** Piper (`tr_TR-dfki-medium`), cümle bazlı streaming, konuşurken sözünü kesebilme (barge-in)
+- **TTS:** Piper (`tr_TR-dfki-medium`), cümle bazlı streaming, konuşurken "Hey Jarvis" ile sözünü kesebilme (barge-in)
 - **Wake word:** openWakeWord (`hey_jarvis`)
 - **VAD / AEC:** Silero VAD, PipeWire echo-cancel
 - **Katman 2:** `paraphrase-multilingual-MiniLM-L12-v2` embedding, CPU
