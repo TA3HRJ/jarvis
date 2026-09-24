@@ -157,6 +157,44 @@ bütün halinde, aceleye getirmeden oku ve gözden geçir — özellikle:
 
 Sistemd servisi (`jarvis-main.service`) hâlâ çalışıyor durumda, canlı sesle test edilebilir.
 
+### Gözden geçirme yapıldı (2026-09-24) — sonuçlar
+
+Windows makinesinden kod okunarak yapıldı, **laptopta canlı test EDİLMEDİ**.
+
+Düzeltilenler:
+- **Hayalet wake tetiklenmesi (muhtemelen her komuttan sonra):** openWakeWord skoru son 16
+  embedding karesinden (1.28sn) üretiyor, pencere sadece `predict()` ile ilerliyor. Yakalama +
+  TTS boyunca model beslenmediği için döngüye dönünce pencere hâlâ "Hey Jarvis"i içeriyordu.
+  0.4.0'da `reset()` sadece skor tamponunu siliyor (kaynaktan doğrulandı). `_flush_wake_model()`
+  pencereyi 2sn sessizlikle dolduruyor. `ae94f74`'teki "gürültü filtresi" ihtiyacının
+  kök nedeni bu olabilir. **Windows'ta sentetik sesle doğrulandı** (openWakeWord 0.4.0,
+  Windows TTS "Hey Jarvis"): temizlemesiz dönüşte ilk kare skoru 0.99 → anında yeniden
+  tetikleniyor; sadece `reset()` ile 400ms'de (5 kare sıfırlamadan sonra) yine tetikleniyor;
+  `_flush_wake_model()` ile tetiklenme yok, ardından gelen gerçek ikinci "Hey Jarvis" normal
+  algılanıyor. Temizleme ~200ms sürüyor (komuttan sonra, kullanıcı fark etmez).
+- Katman 4 istisnası (internet yok, API hatası) ana döngüyü düşürüyordu → yakalanıp sesli hata veriliyor.
+- `speak()` `barge_in=True` iken hep `False` dönüyordu (kullanan yoktu, gizli hataydı).
+- Silero VAD durumlu (RNN) — her kayıt/playback başında `reset_states()`.
+- Katman 3 kilitsizdi: API threadpool'u + sesli döngü aynı `Llama`'yı eşzamanlı kullanabiliyordu;
+  idle-unload timer'ı kullanım anında boşaltabiliyordu. Kilit + son-kullanım kontrolü eklendi.
+- Whisper/embedding lazy-load'u ısıtma thread'iyle yarışıyordu (çift yükleme) → kilit.
+- `memory.py` embedding modelinin ayrı kopyasını yüklüyordu (~458MB) → router'ınki paylaşılıyor.
+
+Değerlendirilen ama DEĞİŞTİRİLMEYENLER:
+- **İki `pw-record` aynı AEC kaynağında:** PipeWire bir kaynağı birden çok yakalama akışına
+  dağıtır, çakışma yok. Ama gereksiz: ana akış TTS boyunca zaten drenaj ediliyor.
+- **Barge-in 0.6sn toleransı:** kanıtlanmadı. Kontrol: `journalctl --user -u jarvis-main.service | grep barge-in`
+  — kesilme süreleri hep ~0.6-0.9sn ise sorun yakınsama değil kalıcı yankı sızıntısıdır ve tolerans işe yaramıyor.
+- **Tasarım önerisi (kullanıcı kararı bekliyor):** VAD tabanlı barge-in yerine wake-word tabanlı
+  barge-in — TTS sırasında drenaj edilen ana akış wake modeline beslenir, "Hey Jarvis" playback'i
+  keser ve doğrudan dinlemeye geçer. Jarvis'in kendi sesi "konuşma"dır (VAD her zaman tetiklenmeye
+  açık) ama "Hey Jarvis" değildir. İkinci `pw-record`, ikinci VAD, tolerans hilesi ortadan kalkar;
+  şu an barge-in sonrası kullanıcının ayrıca "Hey Jarvis" demesi gereken UX sorunu da çözülür.
+- **VRAM:** ısıtma Whisper'ı kalıcı yüklüyor, Katman 3 kullanımdan sonra 60sn kalıyor — o pencerede
+  ikisi birlikte GPU'da (CLAUDE.md'deki OOM kombinasyonu). Katman 3'e düşen bir komuttan hemen sonra
+  `nvidia-smi` ile ölçülmeli.
+- Wake word sonrası konuşma hiç başlamazsa 8sn bekleniyor — ayrı bir "konuşma başlama" zaman aşımı (~3sn) düşünülebilir.
+
 ## Git kimliği
 
 Kimlik bu depoda **yerel** olarak ayarlı (`.git/config`); makinede global `.gitconfig` yok:

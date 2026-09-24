@@ -1,5 +1,6 @@
 """3 katmanlı niyet yönlendirici: Katman 1 (regex) -> Katman 2 (embedding) -> Katman 3 (yerel LLM)."""
 
+import threading
 from dataclasses import dataclass
 
 import numpy as np
@@ -31,24 +32,31 @@ _catalog_embeddings = None
 _catalog_index: list[tuple[Intent, str]] = []
 
 
-def _get_embed_model():
-    global _embed_model
-    if _embed_model is None:
-        from sentence_transformers import SentenceTransformer
+# warm_up thread'i, sesli döngü ve API aynı anda ilk kez çağırabilir — modeli iki kez yüklemesinler
+_init_lock = threading.RLock()
 
-        _embed_model = SentenceTransformer(
-            "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2", device="cpu"
-        )
+
+def _get_embed_model():
+    """memory.py de bu modeli kullanır (ayrı kopya yüklemez)."""
+    global _embed_model
+    with _init_lock:
+        if _embed_model is None:
+            from sentence_transformers import SentenceTransformer
+
+            _embed_model = SentenceTransformer(
+                "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2", device="cpu"
+            )
     return _embed_model
 
 
 def _get_catalog_embeddings():
     global _catalog_embeddings, _catalog_index
-    if _catalog_embeddings is None:
-        model = _get_embed_model()
-        _catalog_index = [(intent, phrase) for intent in CATALOG for phrase in intent.example_phrases]
-        phrases = [p for _, p in _catalog_index]
-        _catalog_embeddings = model.encode(phrases, normalize_embeddings=True)
+    with _init_lock:
+        if _catalog_embeddings is None:
+            model = _get_embed_model()
+            _catalog_index = [(intent, phrase) for intent in CATALOG for phrase in intent.example_phrases]
+            phrases = [p for _, p in _catalog_index]
+            _catalog_embeddings = model.encode(phrases, normalize_embeddings=True)
     return _catalog_embeddings
 
 

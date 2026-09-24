@@ -52,6 +52,7 @@ def _get_vad_model():
 
 def _watch_for_speech(interrupted: threading.Event, playback: subprocess.Popen) -> None:
     model = _get_vad_model()
+    model.reset_states()  # önceki playback'in RNN durumu taşınmasın
     frame_bytes = VAD_FRAME_SAMPLES * 2
     rec = subprocess.Popen(
         [
@@ -123,7 +124,9 @@ def speak(text: str, barge_in: bool = True) -> bool:
         proc.wait()
 
     if watcher is not None:
-        interrupted.set()  # izleyici thread'in çıkması için (VAD hiç tetiklenmediyse)
+        # İzleyici playback.poll() ile kendiliğinden çıkar (en fazla bir VAD karesi, ~32ms).
+        # Burada interrupted.set() YAPILMAMALI — önceden yapılıyordu ve speak() barge_in=True
+        # iken kesilmese bile her zaman False dönüyordu.
         watcher.join(timeout=1)
 
     return not interrupted.is_set()

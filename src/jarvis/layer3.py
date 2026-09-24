@@ -3,6 +3,7 @@
 
 import json
 import threading
+import time
 
 from .catalog import CATALOG
 
@@ -35,6 +36,10 @@ SYSTEM_PROMPT = (
 _llm = None
 _grammar = None
 _unload_timer = None
+_last_used = 0.0
+# Sesli döngü ve API (uvicorn threadpool) aynı süreçte — llama.cpp bağlamı thread-safe değil,
+# idle-unload timer'ı da ayrı bir thread. Model erişimi tek kilit arkasında.
+_lock = threading.Lock()
 
 
 def _get_llm():
@@ -62,7 +67,10 @@ def _unload_llm() -> None:
     route()'u 11+ saniyeye çıkardı (canlı testte ölçüldü). Doğrusu: gerçekten BOŞTA
     kalınca (IDLE_UNLOAD_SECONDS) boşalt, ardışık hızlı kullanımlarda sıcak tut."""
     global _llm
-    if _llm is not None:
+    with _lock:
+        # Timer tetiklenip kilidi beklerken yeni bir kullanım olduysa boşaltma
+        if _llm is None or time.monotonic() - _last_used < IDLE_UNLOAD_SECONDS:
+            return
         del _llm
         _llm = None
         import gc
@@ -82,19 +90,22 @@ def _schedule_idle_unload() -> None:
 def layer3_match(text: str):
     from .router import RouteResult
 
-    llm = _get_llm()
-    grammar = _get_grammar()
-    try:
-        out = llm.create_chat_completion(
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": text},
-            ],
-            grammar=grammar,
-            temperature=0,
-        )
-    finally:
-        _schedule_idle_unload()
+    global _last_used
+    with _lock:
+        llm = _get_llm()
+        grammar = _get_grammar()
+        try:
+            out = llm.create_chat_completion(
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": text},
+                ],
+                grammar=grammar,
+                temperature=0,
+            )
+        finally:
+            _last_used = time.monotonic()
+            _schedule_idle_unload()
 
     content = out["choices"][0]["message"]["content"]
     try:

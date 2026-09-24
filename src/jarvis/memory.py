@@ -6,21 +6,11 @@ import time
 
 import sqlite_vec
 
+# Katman 2'nin modeli — önceden burada ayrı bir kopya yükleniyordu (~458MB fazladan RAM)
+from .router import _get_embed_model
+
 DB_PATH = "jarvis_memory.db"
 EMBED_DIM = 384  # paraphrase-multilingual-MiniLM-L12-v2 ile aynı model, Katman 2 ile paylaşılıyor
-
-_embed_model = None
-
-
-def _get_embed_model():
-    global _embed_model
-    if _embed_model is None:
-        from sentence_transformers import SentenceTransformer
-
-        _embed_model = SentenceTransformer(
-            "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2", device="cpu"
-        )
-    return _embed_model
 
 
 def _connect(db_path: str = DB_PATH) -> sqlite3.Connection:

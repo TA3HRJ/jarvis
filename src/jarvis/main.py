@@ -32,6 +32,7 @@ SILENCE_END_SECONDS = 0.7
 MIN_UTTERANCE_SECONDS = 0.3
 POST_WAKE_DISCARD_SECONDS = 0.7  # "Hey Jarvis"in kuyruğu komuta karışmasın diye kısa bir atlama
 WAKE_MODEL_NAME = "hey_jarvis_v0.1"
+WAKE_FLUSH_SECONDS = 2.0  # > openWakeWord'ün 16 karelik (1.28sn) penceresi
 
 # 0.4sn atlama bazen yetmiyor, Whisper "Hey Jarvis"i de transkribe edip komuta ekliyor
 # (örn. "H.A.R.V.I.S Sesi Kıs", "Hey Jarvis, bilgisayarın sesini kıs") — metinden de temizle.
@@ -46,6 +47,7 @@ def _strip_wake_prefix(text: str) -> str:
     return stripped if stripped else text
 
 _whisper_model = None
+_whisper_lock = threading.Lock()  # _warm_up thread'i ile ilk komut aynı anda yüklemesin (2x VRAM)
 
 
 def _find_wake_model_path() -> str:
@@ -88,7 +90,21 @@ def _read_frame(proc: subprocess.Popen, n_samples: int) -> np.ndarray | None:
     return np.frombuffer(data, dtype=np.int16)
 
 
+def _flush_wake_model(wake_model) -> None:
+    """openWakeWord skoru son ~1.3sn'lik (16 kare) embedding penceresinden üretir ve bu
+    pencere sadece predict() çağrıldıkça ilerler. Komut yakalama + TTS boyunca modele ses
+    beslenmediği için döngüye dönüldüğünde pencere hâlâ "Hey Jarvis"i içeriyor — ilk kare
+    yine eşiği aşıp hayalet bir ikinci tetiklenme üretir (ardından 8sn boş kayıt + Whisper'ın
+    sessizlikte halüsinasyon riski). 0.4.0'daki reset() sadece skor tamponunu temizliyor,
+    öznitelik tamponunu değil — pencereyi sessizlikle doldurup öyle sıfırla."""
+    silence = np.zeros(WAKE_FRAME_SAMPLES, dtype=np.int16)
+    for _ in range(int(WAKE_FLUSH_SECONDS * SAMPLE_RATE / WAKE_FRAME_SAMPLES)):
+        wake_model.predict(silence)
+    wake_model.reset()
+
+
 def _capture_utterance(proc: subprocess.Popen, vad_model) -> np.ndarray:
+    vad_model.reset_states()  # Silero durumlu (RNN) — önceki kayıttan kalan durum taşınmasın
     chunks = []
     silence_frames = 0
     silence_limit = int(SILENCE_END_SECONDS * SAMPLE_RATE / VAD_FRAME_SAMPLES)
@@ -118,11 +134,12 @@ def _capture_utterance(proc: subprocess.Popen, vad_model) -> np.ndarray:
 
 def _get_whisper_model():
     global _whisper_model
-    if _whisper_model is None:
-        _set_ctranslate2_cuda_libpath()
-        from faster_whisper import WhisperModel
+    with _whisper_lock:
+        if _whisper_model is None:
+            _set_ctranslate2_cuda_libpath()
+            from faster_whisper import WhisperModel
 
-        _whisper_model = WhisperModel("medium", device="cuda", compute_type="int8")
+            _whisper_model = WhisperModel("medium", device="cuda", compute_type="int8")
     return _whisper_model
 
 
@@ -162,6 +179,25 @@ def _speak_and_drain(proc: subprocess.Popen, response: str) -> None:
     finally:
         stop.set()
         drainer.join(timeout=1)
+
+
+def _listen_and_respond(proc: subprocess.Popen, vad_model) -> None:
+    utterance = _capture_utterance(proc, vad_model)
+    if len(utterance) < SAMPLE_RATE * MIN_UTTERANCE_SECONDS:
+        logger.info("çok kısa/boş konuşma, atlanıyor")
+        return
+    text = _strip_wake_prefix(_transcribe(utterance))
+    logger.info("duyulan: %r", text)
+    if not text:
+        return
+    # Katman 4 ağa çıkıyor — internet yokken/API hata verince istisna ana döngüden
+    # taşıp servisi düşürüyordu (her bulut isteğinde çök + ~15sn yeniden ısınma).
+    try:
+        response = handle_command(text, source="local")
+    except Exception:
+        logger.exception("komut işlenirken hata: %r", text)
+        response = "Bir hata oluştu, isteğini tamamlayamadım."
+    _speak_and_drain(proc, response)
 
 
 def _run_api_server() -> None:
@@ -211,15 +247,10 @@ def run() -> None:
                 logger.debug("wake skoru: %.3f", score)
             if score > WAKE_THRESHOLD:
                 logger.info("wake word algılandı (skor=%.3f), dinleniyor...", score)
-                utterance = _capture_utterance(proc, vad_model)
-                if len(utterance) < SAMPLE_RATE * MIN_UTTERANCE_SECONDS:
-                    logger.info("çok kısa/boş konuşma, atlanıyor")
-                    continue
-                text = _strip_wake_prefix(_transcribe(utterance))
-                logger.info("duyulan: %r", text)
-                if text:
-                    response = handle_command(text, source="local")
-                    _speak_and_drain(proc, response)
+                try:
+                    _listen_and_respond(proc, vad_model)
+                finally:
+                    _flush_wake_model(wake_model)
     finally:
         proc.terminate()
 
